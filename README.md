@@ -9,6 +9,7 @@ This is a Qgis-map for the SPP-Vanilla repack. It can be used to visualize a bro
 -Download and install QGIS https://www.qgis.org/nl/site/forusers/download.html
 -Add plugin https://plugins.qgis.org/plugins/FreehandRasterGeoreferencer/
 -[optional] Add plugin https://plugins.qgis.org/plugins/DataPlotly/
+-[optional] Download https://sourceforge.net/projects/live-graph/
 -When opening the qgz file keep any unavailable layers.
 -Show and hide layers as wanted.
 
@@ -29,9 +30,17 @@ The ADD button on the toolbar can be used to add any image to the map file. Keep
 Read up on qgis or play with the examples. There are a lot of possibilities.
 
 [Plot level progression]
+-Needs bot_events.csv [make sure you add this to AllowedLogFiles]
 -In qgis: Plugins -> dataplotty
 -In dataplotty dock: configuration -> load configuration -> open bot_level_plot.xml
 -Create plot
+
+[Plot performance]
+-Needs activity_pid.csv [make sure you add this to AllowedLogFiles]
+-Open livegraph
+-In lifegraph: Datafile -> open activity_pid.csv 
+-Graph settings: open universal.lggs
+-Data series: open universal.lgdss
 
 [Have ideas, suggestions or need help?]
 Contact mostlikely#6332 on discord or mosikely4r@gmail.com
