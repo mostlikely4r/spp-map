@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dataplotly>
+<Option type="Map">
+ <Option type="Map" name="dynamic_properties">
+  <Option type="QString" value="" name="name"/>
+  <Option type="Map" name="properties">
+   <Option type="Map" name="color">
+    <Option type="bool" value="true" name="active"/>
+    <Option type="QString" value="case &#xd;&#xa;when &quot;field_3&quot; = 'XpGainAction' then case when &quot;field_6&quot; = 1 then color_rgb(198,155,109)&#xd;&#xa;when &quot;field_6&quot; = 2 then color_rgb(244,140,186)&#xd;&#xa;when &quot;field_6&quot; = 3 then color_rgb(170,211,114)&#xd;&#xa;when &quot;field_6&quot; = 4 then color_rgb(255,244,104)&#xd;&#xa;when &quot;field_6&quot; = 5 then color_rgb(255,255,255)&#xd;&#xa;when &quot;field_6&quot; = 7 then color_rgb(0,112,221)&#xd;&#xa;when &quot;field_6&quot; = 8 then color_rgb(63,199,235)&#xd;&#xa;when &quot;field_6&quot; = 9 then color_rgb(135,136,238)&#xd;&#xa;when &quot;field_6&quot; = 11 then color_rgb(255,124,10)&#xd;&#xa;else color_rgb(196,30,58)&#xd;&#xa;end&#xd;&#xa;when &quot;field_3&quot; = 'AutoReleaseSpiritAction' then color_rgba(0,0,0,255)&#xd;&#xa;when &quot;field_3&quot; = 'TalkToQuestGiverAction' then color_rgba(0,255,0,255)&#xd;&#xa;when &quot;field_3&quot; = 'QuestObjectiveCompletedAction' then color_rgba(0,0,255,255)&#xd;&#xa;when &quot;field_3&quot; = 'QueryItemUsageAction' then color_rgba(0,0,255,255)&#xd;&#xa;else color_rgb(100,100,100)&#xd;&#xa;end" name="expression"/>
+    <Option type="int" value="3" name="type"/>
+   </Option>
+   <Option type="Map" name="filter">
+    <Option type="bool" value="true" name="active"/>
+    <Option type="QString" value="case &#xd;&#xa;when &quot;field_3&quot; = 'XpGainAction' then 1&#xd;&#xa;when &quot;field_3&quot; = 'AutoReleaseSpiritAction' then 1&#xd;&#xa;when &quot;field_3&quot; = 'TalkToQuestGiverAction' then 1&#xd;&#xa;when &quot;field_3&quot; = 'QuestObjectiveCompletedAction' then 1&#xd;&#xa;when &quot;field_3&quot; = 'QueryItemUsageAction' then 1&#xd;&#xa;else 0&#xd;&#xa;end&#xd;&#xa;and (&quot;field_2&quot; = 'Pally' or 1=1)" name="expression"/>
+    <Option type="int" value="3" name="type"/>
+   </Option>
+   <Option type="Map" name="marker_size">
+    <Option type="bool" value="true" name="active"/>
+    <Option type="QString" value="case &#xd;&#xa;when &quot;field_3&quot; = 'XpGainAction' then 2&#xd;&#xa;when &quot;field_3&quot; = 'AutoReleaseSpiritAction' then 8&#xd;&#xa;when &quot;field_3&quot; = 'TalkToQuestGiverAction' then 8&#xd;&#xa;when &quot;field_3&quot; = 'QuestObjectiveCompletedAction' then 4&#xd;&#xa;when &quot;field_3&quot; = 'QueryItemUsageAction' then 4&#xd;&#xa;else 10&#xd;&#xa;end" name="expression"/>
+    <Option type="int" value="3" name="type"/>
+   </Option>
+   <Option type="Map" name="stroke_color">
+    <Option type="bool" value="true" name="active"/>
+    <Option type="QString" value="case when &quot;field_6&quot; = 1 then color_rgb(198,155,109)&#xd;&#xa;when &quot;field_6&quot; = 2 then color_rgb(244,140,186)&#xd;&#xa;when &quot;field_6&quot; = 3 then color_rgb(170,211,114)&#xd;&#xa;when &quot;field_6&quot; = 4 then color_rgb(255,244,104)&#xd;&#xa;when &quot;field_6&quot; = 5 then color_rgb(255,255,255)&#xd;&#xa;when &quot;field_6&quot; = 7 then color_rgb(0,112,221)&#xd;&#xa;when &quot;field_6&quot; = 8 then color_rgb(63,199,235)&#xd;&#xa;when &quot;field_6&quot; = 9 then color_rgb(135,136,238)&#xd;&#xa;when &quot;field_6&quot; = 11 then color_rgb(255,124,10)&#xd;&#xa;else color_rgb(196,30,58)&#xd;&#xa;end" name="expression"/>
+    <Option type="int" value="3" name="type"/>
+   </Option>
+   <Option type="Map" name="stroke_width">
+    <Option type="bool" value="false" name="active"/>
+    <Option type="QString" value="" name="expression"/>
+    <Option type="int" value="3" name="type"/>
+   </Option>
+  </Option>
+  <Option type="QString" value="collection" name="type"/>
+ </Option>
+ <Option type="Map" name="plot_layout">
+  <Option type="QString" value="&quot;field_2&quot;" name="additional_info_expression"/>
+  <Option type="QString" value="group" name="bar_mode"/>
+  <Option type="double" value="0" name="bargaps"/>
+  <Option type="bool" value="false" name="bins_check"/>
+  <Option type="QString" value="#000000" name="font_title_color"/>
+  <Option type="QString" value="Arial" name="font_title_family"/>
+  <Option type="int" value="10" name="font_title_size"/>
+  <Option type="QString" value="#000000" name="font_xlabel_color"/>
+  <Option type="QString" value="Arial" name="font_xlabel_family"/>
+  <Option type="int" value="10" name="font_xlabel_size"/>
+  <Option type="QString" value="#000000" name="font_xticks_color"/>
+  <Option type="QString" value="Arial" name="font_xticks_family"/>
+  <Option type="int" value="10" name="font_xticks_size"/>
+  <Option type="QString" value="#000000" name="font_ylabel_color"/>
+  <Option type="QString" value="Arial" name="font_ylabel_family"/>
+  <Option type="int" value="10" name="font_ylabel_size"/>
+  <Option type="QString" value="#000000" name="font_yticks_color"/>
+  <Option type="QString" value="Arial" name="font_yticks_family"/>
+  <Option type="int" value="10" name="font_yticks_size"/>
+  <Option type="QString" value="#bdbfc0" name="gridcolor"/>
+  <Option type="bool" value="true" name="legend"/>
+  <Option type="QString" value="v" name="legend_orientation"/>
+  <Option type="invalid" name="legend_title"/>
+  <Option type="Map" name="polar">
+   <Option type="Map" name="angularaxis">
+    <Option type="QString" value="clockwise" name="direction"/>
+   </Option>
+  </Option>
+  <Option type="Map" name="range_slider">
+   <Option type="int" value="1" name="borderwidth"/>
+   <Option type="bool" value="false" name="visible"/>
+  </Option>
+  <Option type="QString" value="" name="title"/>
+  <Option type="invalid" name="x_inv"/>
+  <Option type="invalid" name="x_max"/>
+  <Option type="invalid" name="x_min"/>
+  <Option type="QString" value="time" name="x_title"/>
+  <Option type="QString" value="linear" name="x_type"/>
+  <Option type="invalid" name="xaxis"/>
+  <Option type="invalid" name="y_inv"/>
+  <Option type="invalid" name="y_max"/>
+  <Option type="invalid" name="y_min"/>
+  <Option type="QString" value="level" name="y_title"/>
+  <Option type="QString" value="linear" name="y_type"/>
+  <Option type="QString" value="" name="z_title"/>
+ </Option>
+ <Option type="Map" name="plot_properties">
+  <Option type="invalid" name="additional_hover_text"/>
+  <Option type="int" value="10" name="bins"/>
+  <Option type="QString" value="v" name="box_orientation"/>
+  <Option type="bool" value="false" name="box_outliers"/>
+  <Option type="bool" value="false" name="box_stat"/>
+  <Option type="QString" value="Greys" name="color_scale"/>
+  <Option type="bool" value="false" name="color_scale_data_defined_in_check"/>
+  <Option type="bool" value="false" name="color_scale_data_defined_in_invert_check"/>
+  <Option type="QString" value="fill" name="cont_type"/>
+  <Option type="QString" value="Fill" name="contour_type_combo"/>
+  <Option type="bool" value="false" name="cumulative"/>
+  <Option type="List" name="custom">
+   <Option type="QString" value="field_1"/>
+  </Option>
+  <Option type="QString" value="auto" name="hover_label_position"/>
+  <Option type="invalid" name="hover_label_text"/>
+  <Option type="QString" value="all" name="hover_text"/>
+  <Option type="QString" value="#bac301" name="in_color"/>
+  <Option type="bool" value="false" name="invert_color_scale"/>
+  <Option type="QString" value="increasing" name="invert_hist"/>
+  <Option type="bool" value="false" name="layout_filter_by_atlas"/>
+  <Option type="bool" value="false" name="layout_filter_by_map"/>
+  <Option type="QString" value="Solid Line" name="line_combo"/>
+  <Option type="QString" value="solid" name="line_dash"/>
+  <Option type="QString" value="markers" name="marker"/>
+  <Option type="double" value="5" name="marker_size"/>
+  <Option type="int" value="0" name="marker_symbol"/>
+  <Option type="QString" value="Points" name="marker_type_combo"/>
+  <Option type="double" value="1" name="marker_width"/>
+  <Option type="QString" value="event plot" name="name"/>
+  <Option type="QString" value="" name="normalization"/>
+  <Option type="double" value="1" name="opacity"/>
+  <Option type="QString" value="#ff0000" name="out_color"/>
+  <Option type="QString" value="" name="point_combo"/>
+  <Option type="bool" value="false" name="selected_features_only"/>
+  <Option type="bool" value="false" name="show_colorscale_legend"/>
+  <Option type="bool" value="true" name="show_lines"/>
+  <Option type="bool" value="true" name="show_lines_check"/>
+  <Option type="bool" value="true" name="show_mean_line"/>
+  <Option type="bool" value="true" name="violin_box"/>
+  <Option type="QString" value="both" name="violin_side"/>
+  <Option type="bool" value="false" name="visible_features_only"/>
+  <Option type="QString" value="field_1" name="x_name"/>
+  <Option type="QString" value="field_7" name="y_name"/>
+  <Option type="QString" value="" name="z_name"/>
+ </Option>
+ <Option type="QString" value="scatter" name="plot_type"/>
+ <Option type="QString" value="bot_events_1cb69b0a_9c00_440c_a163_0ef6de987e01" name="source_layer_id"/>
+</Option>
