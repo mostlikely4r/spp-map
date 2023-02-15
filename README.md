@@ -1,8 +1,10 @@
 # SPP-MAP
  Qgis map for SPP repack
+ 
+ ![Screenshot](screenshots/MapExample.jpg)
 
 [What is this?]
-This is a Qgis-map for the SPP-Vanilla repack. It can be used to visualize a broad range of data exported from the server.
+This is a Qgis-map for the SPP-Vanilla repack (https://github.com/celguar/mangosbot-bots). It can be used to visualize a broad range of data exported from the server.
 
 [How to use]
 -Place the content in your Settings/[expansion]/Logs directory.
@@ -29,11 +31,15 @@ The ADD button on the toolbar can be used to add any image to the map file. Keep
 [How to see more/different data]
 Read up on qgis or play with the examples. There are a lot of possibilities.
 
+![Screenshot](screenshots/PlayersTravelPathsCreatureLevel.jpg)
+
 [Plot level progression]
 -Needs bot_events.csv [make sure you add this to AllowedLogFiles]
 -In qgis: Plugins -> dataplotty
 -In dataplotty dock: configuration -> load configuration -> open bot_level_plot.xml
 -Create plot
+
+![Screenshot](screenshots/BotLevelOverTime.jpg)
 
 [Plot performance]
 -Needs activity_pid.csv [make sure you add this to AllowedLogFiles]
