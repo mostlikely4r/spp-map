@@ -42,5 +42,7 @@ Read up on qgis or play with the examples. There are a lot of possibilities.
 -Graph settings: open universal.lggs
 -Data series: open universal.lgdss
 
+![Screenshot](screenshots/LiveGraphPerformance.jpg)
+
 [Have ideas, suggestions or need help?]
 Contact mostlikely#6332 on discord or mosikely4r@gmail.com
