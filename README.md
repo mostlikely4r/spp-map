@@ -4,7 +4,7 @@
  ![Screenshot](screenshots/MapExample.jpg)
 
 [What is this?]
-This is a Qgis-map for the SPP-Vanilla repack (https://github.com/celguar/mangosbot-bots). It can be used to visualize a broad range of data exported from the server.
+This is a Qgis-map for the SPP-Classics repack (https://github.com/celguar/mangosbot-bots). It can be used to visualize a broad range of data exported from the server.
 
 [How to use]
 -Place the content in your Settings/[expansion]/Logs directory.
