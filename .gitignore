@@ -1,2 +1,6 @@
 *.log
 LiveGraph.*
+data/
+livemap.toml
+__pycache__/
+*.pyc

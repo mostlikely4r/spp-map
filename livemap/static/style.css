@@ -1,0 +1,52 @@
+:root {
+  --bg: #16181d; --panel: #20232a; --panel2: #2a2e37; --text: #e8e8ea; --muted: #9aa0ab;
+  --pass: #3cc85a; --fail: #e6463c; --abort: #f0a028; --imp: #9696a0; --accent: #28c8ff;
+  --giver: #ffd200; --taker: #3cdc5a; --objective: #ff46c8;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+a { color: var(--accent); text-decoration: none; }
+header#top { position: sticky; top: 0; z-index: 1000; display: flex; gap: 10px; align-items: center; padding: 10px 14px;
+  padding-top: max(10px, env(safe-area-inset-top)); background: #111317; border-bottom: 1px solid #2c2f36; overflow-x: auto; }
+.brand { font-weight: 700; color: var(--text); white-space: nowrap; }
+nav#corechips { display: flex; gap: 6px; }
+main { padding: 12px 14px 40px; max-width: 1100px; margin: 0 auto; }
+.chip { display: inline-block; padding: 5px 11px; border-radius: 999px; background: var(--panel2); color: var(--text); border: 1px solid transparent;
+  font-size: 13px; white-space: nowrap; cursor: pointer; user-select: none; }
+.chip.on { border-color: var(--accent); background: #173444; }
+.chips { display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 8px; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+input[type=search], select, textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #353a44; background: var(--panel); color: var(--text); font-size: 16px; }
+textarea { min-height: 70px; }
+button { padding: 9px 14px; border-radius: 10px; border: 0; background: var(--accent); color: #062230; font-weight: 600; font-size: 14px; cursor: pointer; }
+button.ghost { background: var(--panel2); color: var(--text); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 6px 0 14px; }
+.tile { background: var(--panel); border-radius: 12px; padding: 10px 12px; }
+.tile h3 { margin: 0 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.tile .nums { display: flex; gap: 10px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+.v { display: inline-block; min-width: 54px; text-align: center; padding: 2px 7px; border-radius: 6px; font-size: 12px; font-weight: 700; color: #fff; }
+.v.PASS { background: var(--pass); } .v.FAIL { background: var(--fail); } .v.ABORT { background: var(--abort); } .v.IMPOSSIBLE { background: var(--imp); }
+.list { display: flex; flex-direction: column; gap: 6px; }
+.row { display: block; background: var(--panel); border-radius: 12px; padding: 10px 12px; color: var(--text); }
+.row:active { background: var(--panel2); }
+.row .name { font-weight: 600; word-break: break-word; }
+.row .meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.row .msg { font-size: 13px; margin-top: 4px; color: #cfd2d8; word-break: break-word; }
+.badge { font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--panel2); color: var(--muted); margin-left: 4px; }
+.badge.flip { background: #1c4a2a; color: #8ff0a8; } .badge.gap { background: #4a2a4a; color: #f0a8f0; }
+.badge.bug { background: #4a1f1c; color: #f0a8a0; } .badge.fluke { background: #3a3a2a; color: #e0e0a0; } .badge.fixed { background: #1c3a4a; color: #a0d8f0; }
+h2 { font-size: 17px; margin: 18px 0 8px; }
+h1 { font-size: 18px; margin: 4px 0 4px; word-break: break-word; }
+.sub { color: var(--muted); font-size: 13px; }
+.tabs { display: flex; gap: 6px; margin: 12px 0 6px; }
+#map { height: 58vh; min-height: 300px; border-radius: 12px; background: #1c1f26; margin: 10px 0; }
+.notice { background: #2c2a1e; color: #e6dca0; border-radius: 10px; padding: 8px 10px; font-size: 13px; margin: 6px 0; }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; border: 1px solid #000; }
+.toggles { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0; }
+.timeline .row { padding: 7px 10px; }
+.more { margin: 10px auto; display: block; }
+.triage { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.leaflet-container { background: #1c1f26; font: inherit; }
+.leaflet-tooltip { font-size: 12px; }
+@media (min-width: 900px) { #map { height: 66vh; } }

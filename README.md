@@ -1,54 +1,88 @@
-# SPP-MAP
- Qgis map for SPP repack
- 
- ![Screenshot](screenshots/MapExample.jpg)
+# SPP Livemap
 
-[What is this?]
-This is a Qgis-map for the SPP-Classics repack (https://github.com/celguar/mangosbot-bots). It can be used to visualize a broad range of data exported from the server.
+A browser map and test explorer for SPP / CMaNGOS + PlayerBots servers (vanilla, TBC, WotLK).
+It replaces the old QGIS project (kept in [`legacy/`](legacy/README_QGIS.md) until the new map covers
+everything it did).
 
-[How to use]
--Place the content in your Settings/[expansion]/Logs directory.
--Download and install QGIS https://www.qgis.org/nl/site/forusers/download.html
--Add plugin https://plugins.qgis.org/plugins/FreehandRasterGeoreferencer/
--[optional] Add plugin https://plugins.qgis.org/plugins/DataPlotly/
--[optional] Download https://sourceforge.net/projects/live-graph/
--When opening the qgz file keep any unavailable layers.
--Show and hide layers as wanted.
+What works today (phase 1):
 
-[How to see live data]
-Add the following line to the bot config file:
-AiPlayerbot.AllowedLogFiles =
-Followed by the filenames (comma seperated) you want the server to generate. 
-Examples included in the zip and more may be added or removed later.
-Keep in mind some live log files can grow enormous in size. Use with care.
+- **Test explorer.** Every `[BOTTEST]` result from every boot and every core goes into one small
+  database: latest verdict, run history, pass rate, **"flipped to PASS"** and **regression** feeds,
+  failures grouped by message, and a triage label per test (bug / fluke / gap / fixed + note).
+- **Run page.** Verdict, message, a timeline of the host bot's events and states, and a map with the
+  bot's track plus the quest's giver, objective and turn-in spawns (from the world database) and the
+  bots' travel network (nodes + stored walking paths).
+- **Painted maps with exact placement.** Zone maps and (on WotLK) dungeon floor maps are built from
+  your own game client. Placement comes from the client's own tables (`WorldMapArea.dbc`,
+  `WorldMapOverlay.dbc`, `DungeonMap.dbc`), so server coordinates land exactly on the art. No hand
+  georeferencing.
+- **Phone first.** Mobile layout, short links (`/r/<run>`, `/t/<core>/<test>`), and an optional
+  Cloudflare quick tunnel with token login, so you can use it away from the PC.
+- **Snapshots.** `livemap snapshot` renders a run page to a PNG (also at `/snapshot/run/<id>.png`).
 
-[How to see point information]
-Select a layer (ie. player_simpel) and use the identify features function (ctrl+shift+i) and select one or multiple points.
+Planned next: exact positions with map id and floor from the bot module, live mode, replay scrubber,
+performance graphs, favourite bots, trend movies, and the remaining QGIS layers. See the design plan in
+the SPP_Server repo (`.agents/docs/livemap-design.md`).
 
-[How to add a new map image]
-The ADD button on the toolbar can be used to add any image to the map file. Keep in mind maps have to be manually scaled to match the data. Instances might be shifted between expansions so the maps might need to be shifted but not rescaled. See the freehand raster plugin for more information.
+## Install
 
-[How to see more/different data]
-Read up on qgis or play with the examples. There are a lot of possibilities.
+Python 3.11+ and three packages:
 
-![Screenshot](screenshots/PlayersTravelPathsCreatureLevel.jpg)
+```
+pip install -r requirements.txt
+```
 
-[Plot level progression]
--Needs bot_events.csv [make sure you add this to AllowedLogFiles]
--In qgis: Plugins -> dataplotty
--In dataplotty dock: configuration -> load configuration -> open bot_level_plot.xml
--Create plot
+Optional: `cloudflared` for remote access (`winget install Cloudflare.cloudflared`).
 
-![Screenshot](screenshots/BotLevelOverTime.jpg)
+## Configure
 
-[Plot performance]
--Needs activity_pid.csv [make sure you add this to AllowedLogFiles]
--Open livegraph
--In lifegraph: Datafile -> open activity_pid.csv 
--Graph settings: open universal.lggs
--Data series: open universal.lgdss
+Copy `livemap.example.toml` to `livemap.toml` and set your paths. With `spp_root` pointing at your
+`SPP_Server` folder, the logs, DBC files and world database login are found automatically per core;
+you only add the path to each game client's `Data` folder (needed for painted maps).
 
-![Screenshot](screenshots/PerformanceGraph.jpg)
+## Run
 
-[Have ideas, suggestions or need help?]
-Let me know!
+```
+python -m livemap serve            # http://127.0.0.1:8420, no login needed on this PC
+python -m livemap serve --tunnel   # also prints a https://....trycloudflare.com/?token=... link
+python -m livemap ingest           # index results once and print counts
+python -m livemap snapshot --run 1804
+python -m livemap snapshot --test "an improper burial"
+python -m livemap basemaps         # prebuild every painted map (otherwise built on first use)
+```
+
+Open the tunnel link once on your phone; it stores a cookie and drops the token from the address.
+Anyone without the token gets 401. A quick tunnel gets a new address every start; the token stays
+the same (`data/access_token.txt`; delete it to issue a new one).
+
+## What the data needs
+
+| Feature | Needs |
+| --- | --- |
+| Test explorer | `bot_test_results*.log` in `Settings/<core>/logs` (the test framework writes these) |
+| Quest markers, travel nodes | world database (read from `mangosd.conf`) |
+| Bot track on the run page | `bot_heartbeat.csv` (best) or `bot_states.csv` (coarse) and `bot_events.csv` in `AiPlayerbot.AllowedLogFiles`. These are wiped at server boot, so older runs may show no track |
+| Instance positions | `map_offsets.csv` in `AiPlayerbot.AllowedLogFiles` |
+| Painted maps | the game client's `Data` folder |
+
+The map art comes from your own client and is built locally; this repository does not ship
+Blizzard art.
+
+## Layout
+
+```
+livemap/
+  __main__.py   command line (serve, ingest, snapshot, basemaps)
+  config.py     livemap.toml loading
+  results.py    [BOTTEST] line + test name parsing
+  catalog.py    SQLite: runs, flips, groups, triage, favourites
+  telemetry.py  time-sliced reads of the big CSV logs, display -> world coordinates
+  basemap.py    painted zone / dungeon floor maps from the client
+  clientdata.py MPQ + DBC + BLP reading
+  worlddb.py    quest givers / objectives / turn-ins, travel nodes
+  app.py        run reconstruction (map choice, track, markers)
+  server.py     HTTP API, token login, static files
+  snapshot.py   PNG renderer
+  static/       web client (Leaflet, no build step)
+legacy/         the old QGIS project
+```

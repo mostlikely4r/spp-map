@@ -1,0 +1,19 @@
+spp_root = "C:/Games/SPP_Classics_V2/SPP_Server"
+
+[server]
+host = "127.0.0.1"
+port = 8420
+data_dir = "data"
+require_token_local = false
+
+[[core]]
+name = "vanilla"
+client = "C:/Games/WoW-Classic/Data"
+
+[[core]]
+name = "tbc"
+client = "C:/Games/WoW-TBC/Data"
+
+[[core]]
+name = "wotlk"
+client = "C:/Games/WoW-WotLK/Data"
