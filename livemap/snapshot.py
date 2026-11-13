@@ -41,10 +41,31 @@ def render_run(app, view, width=1400):
             height = max(300, min(int(width * ratio), width))
         base = Image.new("RGB", (width, height), (28, 30, 36))
     w, h = base.size
+
+    def px0(x, y):
+        return ((b["left"] - y) / (b["left"] - b["right"]) * w, (b["top"] - x) / (b["top"] - b["bottom"]) * h)
+
+    crop = (0.0, 0.0, 1.0)
+    if b and view.get("basemap"):
+        focus = [px0(p["x"], p["y"]) for p in view["track"]]
+        focus += [px0(m["x"], m["y"]) for m in view["markers"] if m["role"] != "objective" or m.get("focus")]
+        if focus:
+            xs, ys = [p[0] for p in focus], [p[1] for p in focus]
+            cw = max((max(xs) - min(xs)) * 1.5, w * 0.3)
+            ch = max((max(ys) - min(ys)) * 1.5, h * 0.3)
+            cw, ch = max(cw, ch * w / h), max(ch, cw * h / w)
+            if cw < w * 0.95:
+                cx, cy = (max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2
+                left = min(max(0.0, cx - cw / 2), w - cw)
+                top = min(max(0.0, cy - ch / 2), h - ch)
+                base = base.crop((int(left), int(top), int(left + cw), int(top + ch))).resize((w, h), Image.LANCZOS)
+                crop = (left, top, w / cw)
     d = ImageDraw.Draw(base, "RGBA")
 
     def px(x, y):
-        return ((b["left"] - y) / (b["left"] - b["right"]) * w, (b["top"] - x) / (b["top"] - b["bottom"]) * h)
+        ox, oy = px0(x, y)
+        return ((ox - crop[0]) * crop[2], (oy - crop[1]) * crop[2])
+
 
     if b:
         for m in view["markers"]:

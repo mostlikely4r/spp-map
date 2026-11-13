@@ -61,8 +61,10 @@ the same (`data/access_token.txt`; delete it to issue a new one).
 | --- | --- |
 | Test explorer | `bot_test_results*.log` in `Settings/<core>/logs` (the test framework writes these) |
 | Quest markers, travel nodes | world database (read from `mangosd.conf`) |
-| Bot track on the run page | `bot_heartbeat.csv` (best) or `bot_states.csv` (coarse) and `bot_events.csv` in `AiPlayerbot.AllowedLogFiles`. These are wiped at server boot, so older runs may show no track |
-| Instance positions | `map_offsets.csv` in `AiPlayerbot.AllowedLogFiles` |
+| Exact bot track on the run page | `bot_positions.csv` (every bot, every 5 s, map + world position + floor) and `bot_test_runs.csv` (exact test start/end, last actions, travel target) in `AiPlayerbot.AllowedLogFiles`. Needs a PlayerBots build with the livemap data contract (manifest `contract: 1`) |
+| Older / fallback tracks | `bot_heartbeat.csv`, `bot_states.csv`, `bot_events.csv` (old builds: display coordinates only, map guessed) |
+| History across restarts | `AiPlayerbot.LogArchiveOnBoot = 1` (old logs are renamed `<name>_<YYYYmmdd_HHMMSS>.csv` instead of wiped; `LogArchiveKeepBoots` limits how many). Toggle it on the Settings page |
+| Instance positions (old builds) | `map_offsets.csv`, `livemap_manifest.json` in `AiPlayerbot.AllowedLogFiles` |
 | Painted maps | the game client's `Data` folder |
 
 The map art comes from your own client and is built locally; this repository does not ship

@@ -31,6 +31,8 @@ async function api(path, opts) {
   return data;
 }
 
+function add(...kids) { view.append(...kids.flat().filter(k => k !== null && k !== undefined && k !== false)); }
+
 function go(path) { history.pushState({}, '', path); route(); }
 document.addEventListener('click', e => {
   const a = e.target.closest('a[data-link]');
@@ -56,7 +58,7 @@ function coreChips() {
 
 function showError(err) {
   view.textContent = '';
-  view.append(el('div', { class: 'notice' }, String(err.message || err)));
+  add(el('div', { class: 'notice' }, String(err.message || err)));
 }
 
 async function route() {
@@ -69,6 +71,7 @@ async function route() {
     if ((m = p.match(/^\/r\/(\d+)$/))) return await runPage(+m[1]);
     if ((m = p.match(/^\/t\/([^/]+)\/(.+)$/))) return await testPage(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
     if (p === '/clusters') return await clustersPage();
+    if (p === '/settings') return await settingsPage();
     return await homePage();
   } catch (e) { showError(e); }
 }
@@ -111,12 +114,13 @@ async function homePage() {
   const search = el('input', { type: 'search', placeholder: 'search tests (e.g. 8502 clear, molten core)', value: state.q });
   let timer = null;
   search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => { state.q = search.value.trim(); state.offset = 0; homePage(); }, 350); });
-  view.append(
+  add(
     tiles(),
     transitionList('Flipped to PASS', summaryCache.flips.slice(0, 5)),
     transitionList('Regressions (PASS → FAIL)', summaryCache.regressions.slice(0, 5)),
     el('div', { class: 'tabs' }, el('a', { class: 'chip on', href: '/', 'data-link': 1 }, 'Tests'),
-      el('a', { class: 'chip', href: '/clusters', 'data-link': 1 }, 'Failure groups')),
+      el('a', { class: 'chip', href: '/clusters', 'data-link': 1 }, 'Failure groups'),
+      el('a', { class: 'chip', href: '/settings', 'data-link': 1 }, 'Settings')),
     search,
     chipRow([['', 'any verdict'], ['PASS', 'pass'], ['FAIL', 'fail'], ['ABORT', 'abort'], ['IMPOSSIBLE', 'impossible']], 'verdict'),
     chipRow([['', 'all families']].concat(famNames.map(f => [f, f])), 'family'),
@@ -129,6 +133,34 @@ async function homePage() {
     state.offset ? el('button', { class: 'ghost more', onclick: () => { state.offset = Math.max(0, state.offset - 60); homePage(); } }, 'previous page') : null,
   );
   if (document.activeElement !== search && state.q) { search.focus(); search.setSelectionRange(search.value.length, search.value.length); }
+}
+
+async function settingsPage() {
+  const d = await api('settings');
+  view.textContent = '';
+  add(el('h1', {}, 'Bot settings'),
+    el('p', { class: 'sub' }, "Written to each core's live aiplayerbot.conf; they take effect on the next server boot."),
+    ...(d.can_write ? [] : [el('div', { class: 'notice' }, 'Read-only from a remote session. Set allow_remote_write = true in livemap.toml to change these from here.')]));
+  for (const [core, values] of Object.entries(d.cores)) {
+    if (!values) { add(el('h2', {}, core), el('div', { class: 'notice' }, 'aiplayerbot.conf not found')); continue; }
+    add(el('h2', {}, core));
+    for (const [key, v] of Object.entries(values)) {
+      const current = v.value === null ? v.default : v.value;
+      const isBool = key.endsWith('OnBoot');
+      const save = async val => {
+        await api('settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ core, key, value: val }) });
+        settingsPage();
+      };
+      let control;
+      if (isBool) {
+        control = el('span', { class: 'chip' + (current === '1' ? ' on' : ''), onclick: () => d.can_write && save(current === '1' ? '0' : '1') }, current === '1' ? 'on' : 'off');
+      } else {
+        const input = el('input', { type: 'search', inputmode: 'numeric', value: current, style: 'width:90px;display:inline-block' });
+        control = el('span', {}, input, ' ', d.can_write ? el('button', { class: 'ghost', onclick: () => save(input.value.trim()) }, 'save') : null);
+      }
+      add(el('div', { class: 'row' }, el('div', { class: 'name' }, v.label), el('div', { class: 'meta' }, key + (v.value === null ? ' (not set, default ' + v.default + ')' : '')), el('div', {}, control)));
+    }
+  }
 }
 
 function testRow(r) {
@@ -144,7 +176,7 @@ function testRow(r) {
 async function clustersPage() {
   const rows = await api('clusters' + (state.core ? '?core=' + state.core : ''));
   view.textContent = '';
-  view.append(el('div', { class: 'tabs' }, el('a', { class: 'chip', href: '/', 'data-link': 1 }, 'Tests'),
+  add(el('div', { class: 'tabs' }, el('a', { class: 'chip', href: '/', 'data-link': 1 }, 'Tests'),
     el('a', { class: 'chip on', href: '/clusters', 'data-link': 1 }, 'Failure groups')),
     el('p', { class: 'sub' }, 'Failures grouped by message (numbers ignored). Tap a group to open its newest run.'),
     el('div', { class: 'list' }, rows.map(r => el('a', { class: 'row', href: `/r/${r.example}`, 'data-link': 1 },
@@ -164,7 +196,7 @@ async function testPage(core, test) {
       body: JSON.stringify({ core, test, bucket, note: note.value }) });
     testPage(core, test);
   };
-  view.append(
+  add(
     el('h1', {}, prettyTest(test)),
     el('div', { class: 'sub' }, `${core} · ${d.history.length} runs · ${passes} pass`),
     quest ? el('div', { class: 'sub' }, `quest ${quest.id}: ${quest.title} (level ${quest.level})`) : null,
@@ -189,7 +221,7 @@ async function runPage(id) {
   view.textContent = '';
   const mapDiv = el('div', { id: 'map' });
   const toggles = el('div', { class: 'toggles' });
-  view.append(
+  add(
     el('h1', {}, verdict(r.verdict), ' ', prettyTest(r.test)),
     el('div', { class: 'sub' }, `${r.core} · ${r.ts} · host ${r.host}${r.elapsed_s ? ' · ' + r.elapsed_s + ' s' : ''}`),
     el('div', { class: 'msg' }, r.msg),
@@ -197,6 +229,7 @@ async function runPage(id) {
       el('a', { href: `/snapshot/run/${id}.png`, target: '_blank' }, 'snapshot image')),
     d.quest && !d.quest.error ? el('div', { class: 'sub' }, `quest ${d.quest.id}: ${d.quest.title}`) : null,
     ...(d.notice || []).map(n => el('div', { class: 'notice' }, n)),
+    d.record ? recordBlock(d.record) : null,
     mapDiv, toggles,
     el('div', { class: 'legend' },
       el('span', {}, el('span', { class: 'dot', style: 'background:#fff' }), 'start'),
@@ -206,6 +239,15 @@ async function runPage(id) {
     el('h2', {}, `Timeline (${d.events.length} events, ${d.track.length} positions)`),
     el('div', { class: 'list timeline' }, timeline(d)));
   drawRunMap(mapDiv, toggles, d);
+}
+
+function recordBlock(r) {
+  const actions = (r.last_action || '').split('|').map(s => s.trim()).filter(Boolean);
+  return el('details', { class: 'row' },
+    el('summary', {}, `How it ended · ${(r.elapsed_ms / 1000).toFixed(0)} s from ${r.start ? r.start.slice(11) : '?'} to ${r.end.slice(11)}`),
+    r.travel_target ? el('div', { class: 'meta' }, 'travel target: ' + r.travel_target) : null,
+    el('div', { class: 'meta' }, 'last actions:'),
+    el('div', { class: 'msg' }, actions.map(a => el('div', {}, a))));
 }
 
 function timeline(d) {

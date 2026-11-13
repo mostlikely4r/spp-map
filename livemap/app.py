@@ -1,5 +1,6 @@
 import collections
 import os
+from datetime import datetime, timedelta
 import threading
 import time
 
@@ -65,27 +66,48 @@ class App:
             return None
         ctx = self.cores.get(run["core"])
         if ctx is None:
-            return {"run": run, "notice": f"core {run['core']} is not configured"}
+            return {"run": run, "notice": [f"core {run['core']} is not configured"]}
         logs = ctx.core.logs
-        t0, t1 = telemetry.window_for(run)
+        record = telemetry.test_records(logs, run["host"], run["test"], run["ts"])
+        if record and record.get("start"):
+            t0 = shift(record["start"], -5)
+            t1 = shift(record["end"], 5)
+        else:
+            t0, t1 = telemetry.window_for(run)
         track, events, states = telemetry.collect(logs, run["host"], t0, t1)
-        track, test_start = telemetry.trim_to_test_start(track, run["elapsed_s"] is not None)
-        if test_start:
-            events = [e for e in events if e["t"] >= test_start]
+        test_start = record.get("start") if record else None
+        if not test_start:
+            track, test_start = telemetry.trim_to_test_start(track, run["elapsed_s"] is not None)
+            if test_start:
+                events = [e for e in events if e["t"] >= test_start]
+        exact = any(p.get("w") for p in track)
+        if exact:
+            track, arrived = telemetry.cut_teleports(track)
+            if arrived:
+                events = [e for e in events if e["t"] >= arrived]
         quest = self.quest_info(run["core"], run["quest_id"])
         markers = quest_markers(quest, run["variant"]) if quest and "error" not in quest else []
         offsets = telemetry.load_offsets(logs)
-        map_id, map_source = self.pick_map(ctx, run, markers, track, offsets)
-        world_track = to_world(track, offsets.get(map_id)) if map_id is not None else []
-        world_events = to_world([e for e in events if e["d"]], offsets.get(map_id)) if map_id is not None else []
+        if exact:
+            maps = collections.Counter(p["w"][0] for p in track if p.get("w"))
+            end_map = record["end_world"][0] if record and record.get("end_world") else None
+            map_id = end_map if end_map is not None else maps.most_common(1)[0][0]
+            map_source = "logged"
+        else:
+            map_id, map_source = self.pick_map(ctx, run, markers, track, offsets)
+        world_track = to_world(track, offsets.get(map_id), map_id) if map_id is not None else []
+        world_events = to_world([e for e in events if e.get("w") or e["d"]], offsets.get(map_id), map_id) if map_id is not None else []
         focus = [(p["x"], p["y"]) for p in world_track] + [(m["x"], m["y"]) for m in markers if m["map"] == map_id]
         basemap = None
         notice = []
         if map_id is not None and focus:
-            entry = ctx.basemaps.choose(map_id, focus)
+            wmo_ids = [tuple(p["wmo"]) for p in track if p.get("wmo") and p["wmo"][1] > 0]
+            entry = ctx.basemaps.floor_for(map_id, wmo_ids) if wmo_ids else None
+            if entry is None:
+                entry = ctx.basemaps.choose(map_id, focus)
             if entry:
                 basemap = ctx.basemaps.ensure(entry)
-        if basemap:
+        if basemap and not exact:
             b = basemap["bounds"]
             keep = lambda p: inside(b, p["x"], p["y"], MARGIN)
             dropped = len(world_track) - sum(1 for p in world_track if keep(p))
@@ -95,12 +117,16 @@ class App:
                 notice.append(f"{dropped} track points outside this map were hidden (bot left the map or another map overlaps in the log coordinates)")
         if not track:
             notice.append("no position telemetry for this run (logs from that boot were truncated, or the logs are not enabled)")
-        elif track[0]["src"] == "states":
-            notice.append("coarse track from bot_states.csv (heartbeat not available for this run)")
+        elif not exact:
+            notice.append("approximate positions (older log format without map id)")
+            if track[0]["src"] == "states":
+                notice.append("coarse track from bot_states.csv (heartbeat not available for this run)")
         if map_id is not None and not basemap:
             notice.append("no painted map for this area yet; showing positions on a plain grid")
         return {
             "run": run,
+            "record": record,
+            "exact": exact,
             "window": {"start": test_start or t0, "end": t1},
             "map": {"id": map_id, "source": map_source},
             "basemap": basemap,
@@ -140,13 +166,25 @@ def inside(b, x, y, margin=0.0):
     return b["bottom"] - mx <= x <= b["top"] + mx and b["right"] - my <= y <= b["left"] + my
 
 
-def to_world(items, offset):
+def shift(ts, seconds):
+    return (datetime.strptime(ts, telemetry.TS_FMT) + timedelta(seconds=seconds)).strftime(telemetry.TS_FMT)
+
+
+def to_world(items, offset, map_id=None):
     if offset is None:
         offset = (0.0, 0.0)
     out = []
     for it in items:
-        x, y = telemetry.display_to_world(it["d"][0], it["d"][1], offset)
-        o = {k: v for k, v in it.items() if k != "d"}
+        w = it.get("w")
+        if w:
+            if map_id is not None and w[0] != map_id:
+                continue
+            x, y = w[1], w[2]
+        elif it.get("d"):
+            x, y = telemetry.display_to_world(it["d"][0], it["d"][1], offset)
+        else:
+            continue
+        o = {k: v for k, v in it.items() if k not in ("d", "w", "wmo")}
         o["x"], o["y"] = round(x, 2), round(y, 2)
         out.append(o)
     return out

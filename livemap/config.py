@@ -21,6 +21,7 @@ class Core:
     client: str
     world_db: DbInfo | None
     locale: str = "enUS"
+    bot_conf: str = ""
 
 
 @dataclass
@@ -31,6 +32,7 @@ class Config:
     port: int
     token: str
     require_token_local: bool
+    allow_remote_write: bool
     cores: dict[str, Core] = field(default_factory=dict)
 
     def core(self, name):
@@ -80,6 +82,7 @@ def load(path):
         port=int(server.get("port", 8420)),
         token=token,
         require_token_local=bool(server.get("require_token_local", False)),
+        allow_remote_write=bool(server.get("allow_remote_write", False)),
     )
     spp_root = resolve(base, raw.get("spp_root", ""))
     for entry in raw.get("core", []):
@@ -87,6 +90,7 @@ def load(path):
         logs = resolve(base, entry.get("logs") or (spp_root and os.path.join(spp_root, "Settings", name, "logs")))
         dbc = resolve(base, entry.get("dbc") or (spp_root and os.path.join(spp_root, "Modules", name, "dbc")))
         conf = resolve(base, entry.get("mangosd_conf") or (spp_root and os.path.join(spp_root, "Settings", name, "mangosd.conf")))
+        bot_conf = resolve(base, entry.get("aiplayerbot_conf") or (spp_root and os.path.join(spp_root, "Settings", name, "aiplayerbot.conf")))
         db = parse_db_info(entry["world_db"]) if entry.get("world_db") else read_world_db(conf)
         cfg.cores[name] = Core(
             name=name,
@@ -95,6 +99,7 @@ def load(path):
             client=resolve(base, entry.get("client", "")),
             world_db=db,
             locale=entry.get("locale", "enUS"),
+            bot_conf=bot_conf,
         )
     return cfg
 

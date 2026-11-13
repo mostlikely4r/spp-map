@@ -7,10 +7,10 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import snapshot
+from . import botconf, snapshot
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-PAGE_ROUTES = re.compile(r"^/($|r/\d+$|t/[^/]+/.+$|flips$|clusters$|test$)")
+PAGE_ROUTES = re.compile(r"^/($|r/\d+$|t/[^/]+/.+$|flips$|clusters$|test$|settings$)")
 COOKIE = "lm_token"
 
 
@@ -130,6 +130,18 @@ class Handler(BaseHTTPRequestHandler):
             b = self.body()
             cat.set_triage(b["core"], b["test"], b.get("bucket"), b.get("note"))
             return self.send_json({"ok": True, "triage": cat.triage(b["core"], b["test"])})
+        if method == "GET" and name == "settings":
+            return self.send_json({
+                "remote": self.is_remote(),
+                "can_write": not self.is_remote() or app.cfg.allow_remote_write,
+                "cores": {n: botconf.read_values(c.core.bot_conf) for n, c in app.cores.items()},
+            })
+        if method == "POST" and name == "settings":
+            if self.is_remote() and not app.cfg.allow_remote_write:
+                return self.send_json({"error": "changing server settings from a remote session is off (allow_remote_write in livemap.toml)"}, 403)
+            b = self.body()
+            botconf.write_value(app.cores[b["core"]].core.bot_conf, b["key"], b["value"])
+            return self.send_json({"ok": True, "values": botconf.read_values(app.cores[b["core"]].core.bot_conf)})
         if method == "POST" and name == "ingest":
             return self.send_json({"added": app.ingest()})
         return self.send_json({"error": f"unknown endpoint {name}"}, 404)

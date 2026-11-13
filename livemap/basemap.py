@@ -19,6 +19,7 @@ class Basemaps:
         self.areas = self.load_areas()
         self.overlays = self.load_overlays()
         self.floors = self.load_floors()
+        self.wmo_floor = self.load_wmo_floors()
 
     def dbc_path(self, name):
         return os.path.join(self.core.dbc, name + ".dbc")
@@ -69,6 +70,33 @@ class Basemaps:
                 "left": max_y, "right": min_y, "top": max_x, "bottom": min_x,
             })
         return floors
+
+    def load_wmo_floors(self):
+        chunk_path = self.dbc_path("DungeonMapChunk")
+        area_path = self.dbc_path("WMOAreaTable")
+        if not (os.path.exists(chunk_path) and os.path.exists(area_path)):
+            return {}
+        chunks, _ = read_dbc(chunk_path)
+        areas, _ = read_dbc(area_path)
+        floor_by_id = {f["id"]: f for f in self.floors}
+        area_to_floor = {c[2]: floor_by_id[c[3]] for c in chunks if c[3] in floor_by_id}
+        out = {}
+        for a in areas:
+            floor = area_to_floor.get(a[0])
+            if floor:
+                out[(a[1], a[3])] = floor
+        return out
+
+    def floor_for(self, map_id, wmo_ids):
+        votes = {}
+        for root, group in wmo_ids:
+            floor = self.wmo_floor.get((root, group))
+            if floor and floor["map"] == map_id:
+                votes[floor["id"]] = votes.get(floor["id"], 0) + 1
+        if not votes:
+            return None
+        best = max(votes, key=votes.get)
+        return next(f for f in self.floors if f["id"] == best)
 
     def candidates(self, map_id):
         zones = [a for a in self.areas if a["map"] == map_id]
