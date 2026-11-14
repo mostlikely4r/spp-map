@@ -147,6 +147,8 @@ class Handler(BaseHTTPRequestHandler):
             kinds = set(q["kinds"].split(",")) if q.get("kinds") else None
             map_id = int(q["map"]) if q.get("map", "") != "" else None
             return self.send_json(app.live_events(q["core"], map_id, min(int(q.get("seconds", 1800)), 86400), kinds))
+        if method == "GET" and name == "live/intents":
+            return self.send_json(app.live_intents(q["core"], int(q["map"]), min(int(q.get("seconds", 900)), 86400)))
         if method == "GET" and name == "mapinfo":
             return self.send_json(app.cores[q["core"]].map_info(int(q["map"])))
         if method == "GET" and name == "layer":
@@ -154,6 +156,9 @@ class Handler(BaseHTTPRequestHandler):
             bounds = {k: float(q[k]) for k in ("left", "right", "top", "bottom")}
             if q["kind"] == "nodes":
                 return self.send_json(ctx.world.travel_nodes(int(q["map"]), bounds))
+            if q["kind"] == "telecache":
+                kinds = set(q.get("kinds", "").split(",")) - {""}
+                return self.send_json(ctx.layers.telecache.layer(int(q["map"]), bounds, kinds))
             if q["kind"] not in ("creatures", "objects"):
                 return self.send_json({"error": "unknown layer"}, 404)
             return self.send_json(ctx.world.spawn_layer(q["kind"], int(q["map"]), bounds))

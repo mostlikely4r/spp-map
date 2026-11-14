@@ -174,6 +174,17 @@ class WorldDb:
             out.setdefault(int(m), []).append((float(x), float(y)))
         return out
 
+    def occupancy(self, cell):
+        key = ("occupancy", cell)
+        if key not in self.cache:
+            out = {}
+            for table in ("creature", "gameobject"):
+                for m, i, j in self.rows(f"select map, floor(position_x/%s), floor(position_y/%s) from {table} group by 1, 2, 3",
+                                         (cell, cell)):
+                    out.setdefault(int(m), set()).add((int(i), int(j)))
+            self.cache[key] = out
+        return self.cache[key]
+
     def map_extent(self, map_id):
         key = ("extent", map_id)
         if key not in self.cache:

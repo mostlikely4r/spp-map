@@ -13,7 +13,9 @@ What works today:
   15 minutes, the last hour of events and its recent test runs. Follow a bot, search by name, share
   the exact view as a link. Layers: zone maps and names, recent deaths / quests / level-ups, NPCs
   (coloured by role: flight master, inn, vendor, trainer, quest giver, elite...), game objects and
-  the bots' travel network. Dungeons with painted floor maps (WotLK) get floor buttons; every other
+  the bots' travel network, **travel intent** (dashed line from each bot to where it is heading, coloured
+  by purpose: quest, trainer, bank, gathering..., from `travel_map.csv`) and the **teleport cache**
+  (`telecache.csv`, coloured by level, binned when zoomed out). Dungeons with painted floor maps (WotLK) get floor buttons; every other
   dungeon, raid and battleground shows its indoor minimap art (see below).
 
 - **Test explorer.** Every `[BOTTEST]` result from every boot and every core goes into one small

@@ -5,6 +5,10 @@ const CLASS_NAMES = { 1: 'Warrior', 2: 'Paladin', 3: 'Hunter', 4: 'Rogue', 5: 'P
 const HORDE_RACES = new Set([2, 5, 6, 8, 10]);
 const ROLE_COLORS = { flightmaster: '#ffe066', innkeeper: '#ff9f43', auctioneer: '#feca57', banker: '#c8d6e5', battlemaster: '#ff6b6b',
   spirithealer: '#a0f0ff', trainer: '#48dbfb', vendor: '#1dd1a1', questgiver: '#ffd200', elite: '#ff9ff3', boss: '#ff3b3b', mob: '#8395a7' };
+const INTENT_COLORS = { quest: '#ffd200', 'trainer class': '#a29bfe', 'trainer trade': '#a29bfe', 'trainer mount': '#a29bfe', Bank: '#c8d6e5', AH: '#c8d6e5', Mail: '#c8d6e5',
+  Repair: '#8395a7', Vendor: '#8395a7', GatherFishing: '#48dbfb', GatherSkinning: '#e17055', GatherMining: '#b2bec3', GatherHerbalism: '#55efc4',
+  Grind: '#ff6b6b', pvp: '#ff3f34', city: '#fab1a0', GenericRpg: '#fd79a8' };
+const DEFAULT_LAYERS = { bots: true, names: false, zones: true, labels: true, events: true, intents: false, npcs: false, objects: false, nodes: false, tele: false };
 const GO_COLORS = { chest: '#feca57', questgiver: '#ffd200', mailbox: '#c8d6e5', meetingstone: '#a29bfe', fishinghole: '#48dbfb', door: '#576574', generic: '#8395a7' };
 const EVENT_STYLE = { death: ['#e6463c', 'died'], levelup: ['#ffd200', 'level up'], quest: ['#3cdc5a', 'quest'], pvp: ['#ff6b6b', 'pvp'],
   trade: ['#1dd1a1', 'trade'], gear: ['#a29bfe', 'gear'], revive: ['#a0f0ff', 'revived'], kill: ['#ff9f43', 'kill'], group: ['#48dbfb', 'group'],
@@ -16,7 +20,7 @@ const MAX_LEVEL = { vanilla: 60, tbc: 70, wotlk: 80 };
 const W = {
   core: null, map: null, timer: null, slowTimer: null, markers: new Map(), selected: null, follow: false, info: null,
   snap: null, color: store('wcolor') || 'faction', filter: store('wfilter') || 'all', layers: null, trail: null, fitted: false,
-  on: JSON.parse(store('wlayers') || 'null') || { bots: true, names: false, zones: true, labels: true, npcs: false, objects: false, nodes: false, events: true },
+  on: { ...DEFAULT_LAYERS, ...(JSON.parse(store('wlayers') || 'null') || {}) },
 };
 
 function wSaveLayers() { store('wlayers', JSON.stringify(W.on)); }
@@ -125,12 +129,12 @@ async function worldPage(core, mapId) {
   mapObj = L.map(mapDiv, { crs: L.CRS.Simple, minZoom: -7, maxZoom: 4, zoomSnap: 0.25, attributionControl: false, preferCanvas: true });
   W.layers = {
     base: L.layerGroup().addTo(mapObj), zones: L.layerGroup(), labels: L.layerGroup(), bots: L.layerGroup(),
-    npcs: L.layerGroup(), objects: L.layerGroup(), nodes: L.layerGroup(), events: L.layerGroup(), sel: L.layerGroup().addTo(mapObj),
+    npcs: L.layerGroup(), objects: L.layerGroup(), nodes: L.layerGroup(), events: L.layerGroup(), tele: L.layerGroup(), intents: L.layerGroup(), sel: L.layerGroup().addTo(mapObj),
   };
   W.renderer = L.canvas({ padding: 0.3 });
   drawBase();
   for (const [key, label] of [['bots', 'bots'], ['names', 'names'], ['zones', 'zone maps'], ['labels', 'zone names'], ['events', 'deaths / quests / levels'],
-    ['npcs', 'NPCs'], ['objects', 'objects'], ['nodes', 'travel nodes']]) {
+    ['intents', 'travel intent'], ['npcs', 'NPCs'], ['objects', 'objects'], ['nodes', 'travel nodes'], ['tele', 'teleport cache']]) {
     const chip = el('span', { class: 'chip' + (W.on[key] ? ' on' : '') }, label);
     chip.onclick = () => { W.on[key] = !W.on[key]; chip.classList.toggle('on', W.on[key]); wSaveLayers(); applyLayer(key); };
     chips.append(chip);
@@ -142,7 +146,7 @@ async function worldPage(core, mapId) {
   const want = new URLSearchParams(location.search).get('bot');
   if (want) selectBot(+want, true);
   W.timer = setInterval(() => { if (document.visibilityState === 'visible') poll(); }, 3000);
-  W.slowTimer = setInterval(() => { if (document.visibilityState === 'visible' && W.on.events) loadEvents(); }, 30000);
+  W.slowTimer = setInterval(() => { if (document.visibilityState === 'visible') { if (W.on.events) loadEvents(); if (W.on.intents) loadIntents(); } }, 30000);
   legend();
 }
 
@@ -226,14 +230,15 @@ function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;
 function applyLayer(key) {
   if (!W.layers) return;
   const layer = { bots: W.layers.bots, zones: W.layers.zones, labels: W.layers.labels, npcs: W.layers.npcs, objects: W.layers.objects,
-    nodes: W.layers.nodes, events: W.layers.events }[key];
+    nodes: W.layers.nodes, events: W.layers.events, tele: W.layers.tele, intents: W.layers.intents }[key];
   if (key === 'names') return updateNames();
   if (!layer) return;
   if (W.on[key]) {
     layer.addTo(mapObj);
     if (key === 'zones' || key === 'labels') updateZones();
-    if (key === 'npcs' || key === 'objects' || key === 'nodes') loadViewportLayer(key);
+    if (key === 'npcs' || key === 'objects' || key === 'nodes' || key === 'tele') loadViewportLayer(key);
     if (key === 'events') loadEvents();
+    if (key === 'intents') loadIntents();
   } else mapObj.removeLayer(layer);
 }
 
@@ -329,11 +334,27 @@ async function loadEvents() {
   }
 }
 
-function refreshViewportLayers() { for (const k of ['npcs', 'objects', 'nodes']) if (W.on[k]) loadViewportLayer(k); }
+function refreshViewportLayers() { for (const k of ['npcs', 'objects', 'nodes', 'tele']) if (W.on[k]) loadViewportLayer(k); }
+
+async function loadIntents() {
+  const rows = await api(`live/intents?core=${W.core}&map=${W.map}&seconds=900`);
+  const layer = W.layers.intents;
+  layer.clearLayers();
+  for (const r of rows) {
+    const c = INTENT_COLORS[r.type] || '#dfe6e9';
+    const tip = `${r.t.slice(11)} ${r.bot} (${r.level}) · ${r.purpose}${r.to ? '' : ' · ' + (r.to_name ? 'on ' + r.to_name : 'elsewhere')} · ${r.dist}y`;
+    if (r.to) {
+      L.polyline([ll(r.from[0], r.from[1]), ll(r.to[0], r.to[1])], { color: c, weight: 2, opacity: 0.75, dashArray: '6 4', renderer: W.renderer }).bindTooltip(tip).addTo(layer);
+      L.circleMarker(ll(r.to[0], r.to[1]), { radius: 4, color: '#000', weight: 1, fillColor: c, fillOpacity: 1, renderer: W.renderer }).bindTooltip(tip).addTo(layer);
+    } else {
+      L.circleMarker(ll(r.from[0], r.from[1]), { radius: 6, color: c, weight: 2, fill: false, renderer: W.renderer }).bindTooltip(tip).addTo(layer);
+    }
+  }
+}
 
 async function loadViewportLayer(key) {
   const b = boundsParams();
-  const kind = { npcs: 'creatures', objects: 'objects', nodes: 'nodes' }[key];
+  const kind = { npcs: 'creatures', objects: 'objects', nodes: 'nodes', tele: 'telecache' }[key];
   const q = new URLSearchParams({ core: W.core, map: W.map, kind, ...b });
   const d = await api('layer?' + q.toString());
   const layer = W.layers[key];
@@ -341,6 +362,17 @@ async function loadViewportLayer(key) {
   if (key === 'nodes') {
     for (const link of d.links) L.polyline(link.points.map(p => ll(p[0], p[1])), { color: LINK_COLORS[link.type] || '#fff', weight: link.type === 1 ? 2 : 1, opacity: 0.7, renderer: W.renderer }).addTo(layer);
     for (const n of d.nodes) L.circleMarker(ll(n.x, n.y), { radius: 3, color: '#000', weight: 1, fillColor: '#fff', fillOpacity: 1, renderer: W.renderer }).bindTooltip(n.name).addTo(layer);
+    return;
+  }
+  if (key === 'tele') {
+    if (d.binned) {
+      const max = Math.max(...d.bins.map(b => b[2]));
+      for (const [x, y, n, lvl] of d.bins) L.circleMarker(ll(x, y), { radius: 3 + 8 * Math.sqrt(n / max), color: levelColor(lvl), weight: 1, fillColor: levelColor(lvl), fillOpacity: 0.3, renderer: W.renderer })
+        .bindTooltip(`${n} teleport spots · avg level ${lvl} (zoom in for detail)`).addTo(layer);
+    } else {
+      for (const [x, y, lvl, kind] of d.features) L.circleMarker(ll(x, y), { radius: kind === 'rpg' ? 3 : 2, color: '#000', weight: kind === 'rpg' ? 1 : 0, fillColor: levelColor(lvl), fillOpacity: 0.8, renderer: W.renderer })
+        .bindTooltip(`teleport spot · level ${lvl} · ${kind === 'rpg' ? 'roleplay' : 'levelling'}`).addTo(layer);
+    }
     return;
   }
   if (d.binned) {

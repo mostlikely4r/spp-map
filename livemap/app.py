@@ -7,6 +7,7 @@ import time
 from . import telemetry
 from .basemap import Basemaps
 from .catalog import Catalog
+from .layers import StaticLayers
 from .live import LiveFeed, recent_events
 from .worlddb import WorldDb
 
@@ -19,7 +20,14 @@ class CoreContext:
         self.data_dir = data_dir
         self._basemaps = None
         self._live = None
+        self._layers = None
         self.world = WorldDb(core)
+
+    @property
+    def layers(self):
+        if self._layers is None:
+            self._layers = StaticLayers(self)
+        return self._layers
 
     @property
     def basemaps(self):
@@ -106,6 +114,15 @@ class App:
         card["events"] = recent_events(ctx.core.logs, ctx.live.newest_ts, None, 3600, name=card["name"], limit=40)
         card["runs"] = self.catalog.runs_by_host(core, card["name"])
         return card
+
+    def live_intents(self, core, map_id, seconds):
+        ctx = self.cores[core]
+        rows = ctx.layers.intents.recent(map_id, seconds)
+        names = ctx.basemaps.map_names()
+        for r in rows:
+            if r["to"] is None and r["to_map"] is not None:
+                r["to_name"] = names.get(r["to_map"], f"map {r['to_map']}")
+        return rows
 
     def live_events(self, core, map_id, seconds, kinds):
         ctx = self.cores[core]
