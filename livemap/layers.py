@@ -97,6 +97,78 @@ class Telecache:
                 "features": [[round(xs[i], 1), round(ys[i], 1), levels[i], "rpg" if rpg[i] else "level"] for i in hits]}
 
 
+def hull(points):
+    pts = sorted(set(points))
+    if len(pts) < 3:
+        return pts
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    lower, upper = [], []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return lower[:-1] + upper[:-1]
+
+
+class Zones:
+    def __init__(self, core):
+        self.core = core
+        self.path = os.path.join(core.logs, "zones.csv")
+        self.sig = None
+        self.by_map = {}
+        self.lock = threading.Lock()
+
+    def load(self):
+        sig = file_sig(self.path)
+        if sig == self.sig:
+            return
+        with self.lock:
+            if sig == self.sig:
+                return
+            offsets = map_offsets(self.core.logs)
+            found = {}
+            if sig:
+                with open(self.path, newline="", encoding="utf-8", errors="replace") as fh:
+                    for r in csv.reader(fh):
+                        if len(r) < 6 or not r[1].lstrip("-").isdigit():
+                            continue
+                        map_id = int(r[1])
+                        off = offsets.get(map_id)
+                        if off is None:
+                            continue
+                        coords = re.findall(r"([-\d.e]+) ([-\d.e]+)", r[4])
+                        pts = [telemetry.display_to_world(float(a), float(b), off) for a, b in coords]
+                        z = found.setdefault((map_id, r[2]), {"name": r[2], "zone": r[3], "level": None, "center": None, "points": []})
+                        try:
+                            z["level"] = int(float(r[5]))
+                        except ValueError:
+                            pass
+                        if r[0] == "center" and pts:
+                            z["center"] = [round(pts[0][0], 1), round(pts[0][1], 1)]
+                        else:
+                            z["points"] += pts
+            by_map = {}
+            for (map_id, _), z in found.items():
+                shape = hull(z.pop("points"))
+                if not shape and not z["center"]:
+                    continue
+                z["hull"] = [[round(x, 1), round(y, 1)] for x, y in shape]
+                if not z["center"] and shape:
+                    z["center"] = [round(sum(p[0] for p in shape) / len(shape), 1), round(sum(p[1] for p in shape) / len(shape), 1)]
+                by_map.setdefault(map_id, []).append(z)
+            self.by_map, self.sig = by_map, sig
+
+    def for_map(self, map_id):
+        self.load()
+        return self.by_map.get(map_id, [])
+
+
 class Intents:
     def __init__(self, core, map_of_display):
         self.path = os.path.join(core.logs, "travel_map.csv")
@@ -155,6 +227,7 @@ class StaticLayers:
         self._regions_sig = None
         self.telecache = Telecache(self.core, self.area_map)
         self.intents = Intents(self.core, self.map_of_display)
+        self.zones = Zones(self.core)
 
     def area_map(self, name):
         if self._area_maps is None:

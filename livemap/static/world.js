@@ -3,12 +3,15 @@
 const CLASS_COLORS = { 1: '#c79c6e', 2: '#f58cba', 3: '#abd473', 4: '#fff569', 5: '#ffffff', 6: '#c41f3b', 7: '#0070de', 8: '#69ccf0', 9: '#9482c9', 11: '#ff7d0a' };
 const CLASS_NAMES = { 1: 'Warrior', 2: 'Paladin', 3: 'Hunter', 4: 'Rogue', 5: 'Priest', 6: 'Death Knight', 7: 'Shaman', 8: 'Mage', 9: 'Warlock', 11: 'Druid' };
 const HORDE_RACES = new Set([2, 5, 6, 8, 10]);
+const REACTION_COLORS = { alliance: '#3c8cff', horde: '#e6463c', both: '#3cdc5a', hostile: '#ff9f43', neutral: '#c8d6e5' };
+const NPC_MODES = [['role', 'NPCs by role'], ['level', 'NPCs by level'], ['reaction', 'NPCs by reaction']];
+const PATH_MODES = [['type', 'paths by type'], ['alliance', 'path danger: Alliance'], ['horde', 'path danger: Horde']];
 const ROLE_COLORS = { flightmaster: '#ffe066', innkeeper: '#ff9f43', auctioneer: '#feca57', banker: '#c8d6e5', battlemaster: '#ff6b6b',
   spirithealer: '#a0f0ff', trainer: '#48dbfb', vendor: '#1dd1a1', questgiver: '#ffd200', elite: '#ff9ff3', boss: '#ff3b3b', mob: '#8395a7' };
 const INTENT_COLORS = { quest: '#ffd200', 'trainer class': '#a29bfe', 'trainer trade': '#a29bfe', 'trainer mount': '#a29bfe', Bank: '#c8d6e5', AH: '#c8d6e5', Mail: '#c8d6e5',
   Repair: '#8395a7', Vendor: '#8395a7', GatherFishing: '#48dbfb', GatherSkinning: '#e17055', GatherMining: '#b2bec3', GatherHerbalism: '#55efc4',
   Grind: '#ff6b6b', pvp: '#ff3f34', city: '#fab1a0', GenericRpg: '#fd79a8' };
-const DEFAULT_LAYERS = { bots: true, names: false, zones: true, labels: true, events: true, intents: false, npcs: false, objects: false, nodes: false, tele: false };
+const DEFAULT_LAYERS = { bots: true, names: false, zones: true, labels: true, events: true, intents: false, npcs: false, objects: false, nodes: false, tele: false, zonelv: false };
 const GO_COLORS = { chest: '#feca57', questgiver: '#ffd200', mailbox: '#c8d6e5', meetingstone: '#a29bfe', fishinghole: '#48dbfb', door: '#576574', generic: '#8395a7' };
 const EVENT_STYLE = { death: ['#e6463c', 'died'], levelup: ['#ffd200', 'level up'], quest: ['#3cdc5a', 'quest'], pvp: ['#ff6b6b', 'pvp'],
   trade: ['#1dd1a1', 'trade'], gear: ['#a29bfe', 'gear'], revive: ['#a0f0ff', 'revived'], kill: ['#ff9f43', 'kill'], group: ['#48dbfb', 'group'],
@@ -19,7 +22,7 @@ const MAX_LEVEL = { vanilla: 60, tbc: 70, wotlk: 80 };
 
 const W = {
   core: null, map: null, timer: null, slowTimer: null, markers: new Map(), selected: null, follow: false, info: null,
-  snap: null, color: store('wcolor') || 'faction', filter: store('wfilter') || 'all', layers: null, trail: null, fitted: false,
+  snap: null, npcColor: store('wnpccolor') || 'role', pathColor: store('wpathcolor') || 'type', color: store('wcolor') || 'faction', filter: store('wfilter') || 'all', layers: null, trail: null, fitted: false,
   on: { ...DEFAULT_LAYERS, ...(JSON.parse(store('wlayers') || 'null') || {}) },
 };
 
@@ -39,6 +42,7 @@ function stopWorld() {
   clearInterval(W.timer); clearInterval(W.slowTimer);
   W.timer = W.slowTimer = null;
   W.markers.clear(); W.selected = null; W.trail = null; W.layers = null; W.fitted = false; W.viewApplied = false;
+  W.zoneLabels = null; W.zoneLevels = null;
   document.body.classList.remove('worldmode');
 }
 
@@ -132,23 +136,29 @@ async function worldPage(core, mapId) {
     }, 300);
   });
   const chips = el('div', { class: 'chips wlayers' });
+  const npcSelect = el('select', { class: 'wsel', onchange: e => { W.npcColor = e.target.value; store('wnpccolor', W.npcColor); if (W.on.npcs) loadViewportLayer('npcs'); } },
+    NPC_MODES.map(([v, l]) => el('option', { value: v, selected: v === W.npcColor ? 'selected' : null }, l)));
+  const pathSelect = el('select', { class: 'wsel', onchange: e => { W.pathColor = e.target.value; store('wpathcolor', W.pathColor); if (W.on.nodes) loadViewportLayer('nodes'); } },
+    PATH_MODES.map(([v, l]) => el('option', { value: v, selected: v === W.pathColor ? 'selected' : null }, l)));
+  const styleRow = el('div', { class: 'wrow' }, npcSelect, pathSelect);
   const status = el('div', { class: 'wstatus' });
   const legendBox = el('div', { class: 'legend wlegend' });
   const mapDiv = el('div', { id: 'wmap' });
   const sheet = el('div', { class: 'sheet hidden' });
   add(el('div', { class: 'wbar' }, el('div', { class: 'wrow' }, mapSelect, search), results,
-      el('div', { class: 'wrow' }, colorSelect, filterSelect), chips),
+      el('div', { class: 'wrow' }, colorSelect, filterSelect), chips, styleRow),
     el('div', { class: 'wmapwrap' }, mapDiv, sheet, status), legendBox);
-  W.ui = { mapSelect, chips, status, legendBox, sheet };
+  W.ui = { mapSelect, chips, status, legendBox, sheet, styleRow, npcSelect, pathSelect };
+  styleVisibility();
 
   mapObj = L.map(mapDiv, { crs: L.CRS.Simple, minZoom: -7, maxZoom: 4, zoomSnap: 0.25, attributionControl: false, preferCanvas: true });
   W.layers = {
     base: L.layerGroup().addTo(mapObj), zones: L.layerGroup(), labels: L.layerGroup(), bots: L.layerGroup(),
-    npcs: L.layerGroup(), objects: L.layerGroup(), nodes: L.layerGroup(), events: L.layerGroup(), tele: L.layerGroup(), intents: L.layerGroup(), sel: L.layerGroup().addTo(mapObj),
+    npcs: L.layerGroup(), objects: L.layerGroup(), nodes: L.layerGroup(), events: L.layerGroup(), tele: L.layerGroup(), intents: L.layerGroup(), zonelv: L.layerGroup(), sel: L.layerGroup().addTo(mapObj),
   };
   W.renderer = L.canvas({ padding: 0.3 });
   drawBase();
-  for (const [key, label] of [['bots', 'bots'], ['names', 'names'], ['zones', 'zone maps'], ['labels', atlasMode() ? 'map names' : 'zone names'], ['events', 'deaths / quests / levels'],
+  for (const [key, label] of [['bots', 'bots'], ['names', 'names'], ['zones', 'zone maps'], ['labels', atlasMode() ? 'map names' : 'zone names'], ['zonelv', 'zone levels'], ['events', 'deaths / quests / levels'],
     ['intents', 'travel intent'], ['npcs', 'NPCs'], ['objects', 'objects'], ['nodes', 'travel nodes'], ['tele', 'teleport cache']]) {
     if (atlasMode() && !ATLAS_LAYERS.has(key)) continue;
     const chip = el('span', { class: 'chip' + (W.on[key] ? ' on' : '') }, label);
@@ -156,7 +166,7 @@ async function worldPage(core, mapId) {
     chips.append(chip);
   }
   for (const key of Object.keys(W.on)) applyLayer(key);
-  mapObj.on('moveend', debounce(() => { refreshViewportLayers(); updateZones(); updateNames(); saveView(); }, 400));
+  mapObj.on('moveend', debounce(() => { refreshViewportLayers(); updateZones(); updateNames(); updateZoneLevelLabels(); saveView(); }, 400));
   mapObj.on('click', () => closeSheet());
   ingestSnapshot(await api(`live?core=${W.core}&map=${W.map}`));
   const want = new URLSearchParams(location.search).get('bot');
@@ -280,7 +290,8 @@ function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;
 function applyLayer(key) {
   if (!W.layers) return;
   const layer = { bots: W.layers.bots, zones: W.layers.zones, labels: W.layers.labels, npcs: W.layers.npcs, objects: W.layers.objects,
-    nodes: W.layers.nodes, events: W.layers.events, tele: W.layers.tele, intents: W.layers.intents }[key];
+    nodes: W.layers.nodes, events: W.layers.events, tele: W.layers.tele, intents: W.layers.intents, zonelv: W.layers.zonelv }[key];
+  styleVisibility();
   if (key === 'names') return updateNames();
   if (!layer || (atlasMode() && !ATLAS_LAYERS.has(key))) return;
   if (W.on[key]) {
@@ -289,6 +300,7 @@ function applyLayer(key) {
     if (key === 'npcs' || key === 'objects' || key === 'nodes' || key === 'tele') loadViewportLayer(key);
     if (key === 'events') loadEvents();
     if (key === 'intents') loadIntents();
+    if (key === 'zonelv') loadZoneLevels();
   } else mapObj.removeLayer(layer);
 }
 
@@ -388,6 +400,40 @@ async function loadEvents() {
   }
 }
 
+function styleVisibility() {
+  if (!W.ui || !W.ui.styleRow) return;
+  W.ui.npcSelect.style.display = W.on.npcs ? '' : 'none';
+  W.ui.pathSelect.style.display = W.on.nodes ? '' : 'none';
+  W.ui.styleRow.style.display = !atlasMode() && (W.on.npcs || W.on.nodes) ? '' : 'none';
+}
+
+async function loadZoneLevels() {
+  if (atlasMode()) return;
+  const rows = await api(`layer?core=${W.core}&map=${W.map}&kind=zonelevels&left=0&right=0&top=0&bottom=0`);
+  const layer = W.layers.zonelv;
+  layer.clearLayers();
+  W.zoneLabels = null;
+  W.zoneLevels = rows;
+  for (const z of rows) {
+    const c = z.level ? levelColor(z.level) : '#8395a7';
+    const tip = `${z.name}${z.level ? ' · level ' + z.level : ''}`;
+    if (z.hull.length >= 3) L.polygon(z.hull.map(p => ll(p[0], p[1])), { color: c, weight: 1, fillColor: c, fillOpacity: 0.22, renderer: W.renderer }).bindTooltip(tip, { sticky: true }).addTo(layer);
+  }
+  updateZoneLevelLabels();
+}
+
+function updateZoneLevelLabels() {
+  if (!W.layers || !W.on.zonelv || !W.zoneLevels) return;
+  if (!W.zoneLabels) W.zoneLabels = L.layerGroup().addTo(W.layers.zonelv);
+  W.zoneLabels.clearLayers();
+  const view = mapObj.getBounds();
+  if (mapObj.getZoom() < -3) return;
+  for (const z of W.zoneLevels) {
+    if (!z.level || !z.center || !view.contains(ll(z.center[0], z.center[1]))) continue;
+    L.marker(ll(z.center[0], z.center[1]), { icon: L.divIcon({ className: 'zlabel', html: '<span>' + z.level + '</span>', iconSize: null }), interactive: false }).addTo(W.zoneLabels);
+  }
+}
+
 function refreshViewportLayers() { for (const k of ['npcs', 'objects', 'nodes', 'tele']) if (W.on[k]) loadViewportLayer(k); }
 
 async function loadIntents() {
@@ -416,7 +462,19 @@ async function loadViewportLayer(key) {
   const layer = W.layers[key];
   layer.clearLayers();
   if (key === 'nodes') {
-    for (const link of d.links) L.polyline(link.points.map(p => ll(p[0], p[1])), { color: LINK_COLORS[link.type] || '#fff', weight: link.type === 1 ? 2 : 1, opacity: 0.7, renderer: W.renderer }).addTo(layer);
+    for (const link of d.links) {
+      let color = LINK_COLORS[link.type] || '#fff';
+      let tip = null;
+      if (W.pathColor !== 'type' && link.type === 1) {
+        const dz = link.danger || [0, 0, 0];
+        const lvl = Math.max(dz[0], W.pathColor === 'alliance' ? dz[2] : dz[1]);
+        color = lvl ? levelColor(lvl) : '#576574';
+        tip = lvl ? `toughest creature for ${W.pathColor === 'alliance' ? 'Alliance' : 'Horde'}: level ${lvl}` : 'no hostile creatures recorded';
+      }
+      const line = L.polyline(link.points.map(p => ll(p[0], p[1])), { color, weight: link.type === 1 ? (W.pathColor === 'type' ? 2 : 3) : 1, opacity: 0.8, renderer: W.renderer });
+      if (tip) line.bindTooltip(tip, { sticky: true });
+      line.addTo(layer);
+    }
     for (const n of d.nodes) L.circleMarker(ll(n.x, n.y), { radius: 3, color: '#000', weight: 1, fillColor: '#fff', fillOpacity: 1, renderer: W.renderer }).bindTooltip(n.name).addTo(layer);
     return;
   }
@@ -439,9 +497,11 @@ async function loadViewportLayer(key) {
   }
   for (const f of d.features) {
     if (key === 'npcs') {
-      const [, entry, x, y, name, level, role] = f;
-      L.circleMarker(ll(x, y), { radius: role === 'mob' ? 2 : 4, color: '#000', weight: role === 'mob' ? 0 : 1, fillColor: ROLE_COLORS[role] || '#8395a7', fillOpacity: role === 'mob' ? 0.45 : 0.95, renderer: W.renderer })
-        .bindTooltip(`${name} (${level})${role !== 'mob' ? ' · ' + role : ''} · ${entry}`).addTo(layer);
+      const [, entry, x, y, name, level, role, reaction, maxLevel] = f;
+      const fill = W.npcColor === 'level' ? levelColor(maxLevel) : W.npcColor === 'reaction' ? (REACTION_COLORS[reaction] || '#8395a7') : (ROLE_COLORS[role] || '#8395a7');
+      const plain = W.npcColor === 'role' && role === 'mob';
+      L.circleMarker(ll(x, y), { radius: plain ? 2 : (role === 'mob' ? 3 : 4), color: '#000', weight: plain ? 0 : 1, fillColor: fill, fillOpacity: plain ? 0.45 : 0.9, renderer: W.renderer })
+        .bindTooltip(`${name} (${level})${role !== 'mob' ? ' · ' + role : ''} · ${reaction} · ${entry}`).addTo(layer);
     } else {
       const [, entry, x, y, name, type] = f;
       L.circleMarker(ll(x, y), { radius: 3, color: '#000', weight: 1, fillColor: GO_COLORS[type] || '#8395a7', fillOpacity: 0.9, renderer: W.renderer })

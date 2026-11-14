@@ -15,7 +15,10 @@ What works today:
   (coloured by role: flight master, inn, vendor, trainer, quest giver, elite...), game objects and
   the bots' travel network, **travel intent** (dashed line from each bot to where it is heading, coloured
   by purpose: quest, trainer, bank, gathering..., from `travel_map.csv`) and the **teleport cache**
-  (`telecache.csv`, coloured by level, binned when zoomed out). Dungeons with painted floor maps (WotLK) get floor buttons; every other
+  (`telecache.csv`, coloured by level, binned when zoomed out), **zone levels** (subzone outlines
+  from `zones.csv`, coloured and labelled by level). NPCs can be coloured by role, level or reaction
+  (friendly to Alliance / Horde / both / hostile, from `FactionTemplate.dbc`); travel paths by type or
+  by danger for Alliance or Horde (toughest creature level the bots recorded along the path). Dungeons with painted floor maps (WotLK) get floor buttons; every other
   dungeon, raid and battleground shows its indoor minimap art (see below).
 
 - **Test explorer.** Every `[BOTTEST]` result from every boot and every core goes into one small

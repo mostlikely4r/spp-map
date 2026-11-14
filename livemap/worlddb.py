@@ -137,10 +137,36 @@ class WorldDb:
             return "boss"
         return "mob"
 
+    def reactions(self):
+        if "reactions" not in self.cache:
+            out = {}
+            try:
+                from .clientdata import read_dbc
+                import os
+                recs, _ = read_dbc(os.path.join(self.core.dbc, "FactionTemplate.dbc"))
+                for r in recs:
+                    ours, friend, hostile = r[3], r[4], r[5]
+                    a_friend = bool((friend | ours) & 2) and not hostile & 2
+                    h_friend = bool((friend | ours) & 4) and not hostile & 4
+                    if a_friend and h_friend:
+                        out[r[0]] = "both"
+                    elif a_friend:
+                        out[r[0]] = "alliance"
+                    elif h_friend:
+                        out[r[0]] = "horde"
+                    elif hostile & 7:
+                        out[r[0]] = "hostile"
+                    else:
+                        out[r[0]] = "neutral"
+            except (OSError, ValueError):
+                pass
+            self.cache["reactions"] = out
+        return self.cache["reactions"]
+
     def spawn_layer(self, kind, map_id, bounds, limit=2500, bins=48):
         if kind == "creatures":
             table, alias, tmpl, key = "creature", "c", "creature_template", "Entry"
-            cols = "c.guid, c.id, c.position_x, c.position_y, t.Name, t.MinLevel, t.MaxLevel, t.Rank, t.NpcFlags"
+            cols = "c.guid, c.id, c.position_x, c.position_y, t.Name, t.MinLevel, t.MaxLevel, t.Rank, t.NpcFlags, t.Faction"
         else:
             table, alias, tmpl, key = "gameobject", "c", "gameobject_template", "entry"
             cols = "c.guid, c.id, c.position_x, c.position_y, t.name, t.type"
@@ -156,12 +182,14 @@ class WorldDb:
             return {"binned": True, "total": total, "cell": cell,
                     "bins": [[(float(i) + 0.5) * cell, (float(j) + 0.5) * cell, int(n)] for i, j, n in rows]}
         feats = []
+        reactions = self.reactions() if kind == "creatures" else {}
         for r in self.rows(f"select {cols} {where}", args):
             if kind == "creatures":
-                guid, entry, x, y, name, lo, hi, rank, flags = r
+                guid, entry, x, y, name, lo, hi, rank, flags, faction = r
                 level = f"{lo}" if lo == hi else f"{lo}-{hi}"
                 feats.append([guid, entry, round(float(x), 1), round(float(y), 1), name, level,
-                              self.npc_role(int(flags or 0), int(rank or 0))])
+                              self.npc_role(int(flags or 0), int(rank or 0)), reactions.get(int(faction or 0), "neutral"),
+                              int(hi or 0)])
             else:
                 guid, entry, x, y, name, gtype = r
                 feats.append([guid, entry, round(float(x), 1), round(float(y), 1), name,
@@ -209,8 +237,11 @@ class WorldDb:
             return {"nodes": [], "links": []}
         ids = list(nodes)
         marks = ",".join(["%s"] * len(ids))
-        links = self.rows(
-            f"select node_id, to_node_id, type from ai_playerbot_travelnode_link where node_id in ({marks})", ids)
+        rows = self.rows(
+            f"select node_id, to_node_id, type, max_creature_0, max_creature_1, max_creature_2"
+            f" from ai_playerbot_travelnode_link where node_id in ({marks})", ids)
+        links = [(a, b, t) for a, b, t, *_ in rows]
+        danger = {(a, b): [int(m0), int(m1), int(m2)] for a, b, t, m0, m1, m2 in rows}
         walk = {(a, b) for a, b, t in links if t == 1 and a in nodes and b in nodes}
         paths = {}
         if walk:
@@ -233,5 +264,5 @@ class WorldDb:
                 if b not in nodes:
                     continue
                 pts = [[nodes[a]["x"], nodes[a]["y"]], [nodes[b]["x"], nodes[b]["y"]]]
-            out_links.append({"type": t, "points": pts})
+            out_links.append({"type": t, "points": pts, "danger": danger.get((a, b)) or danger.get((b, a)) or [0, 0, 0]})
         return {"nodes": list(nodes.values()), "links": out_links}

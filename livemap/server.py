@@ -158,6 +158,8 @@ class Handler(BaseHTTPRequestHandler):
             bounds = {k: float(q[k]) for k in ("left", "right", "top", "bottom")}
             if q["kind"] == "nodes":
                 return self.send_json(ctx.world.travel_nodes(int(q["map"]), bounds))
+            if q["kind"] == "zonelevels":
+                return self.send_json(ctx.layers.zones.for_map(int(q["map"])))
             if q["kind"] == "telecache":
                 kinds = set(q.get("kinds", "").split(",")) - {""}
                 return self.send_json(ctx.layers.telecache.layer(int(q["map"]), bounds, kinds))
