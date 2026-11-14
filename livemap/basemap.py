@@ -153,6 +153,40 @@ class Basemaps:
         self.wmo_maps[map_id] = out
         return out
 
+    def terrain_layout(self, map_id):
+        key = ("terrain", map_id)
+        if key in self.wmo_maps:
+            return self.wmo_maps[key]
+        meta = os.path.join(self.out_dir, f"terrain_{map_id}.layout.json")
+        out = None
+        if os.path.exists(meta):
+            with open(meta, encoding="utf-8") as fh:
+                out = json.load(fh)
+        else:
+            directory = self.map_dirs().get(map_id)
+            if directory and self.archives.available():
+                with self.lock:
+                    if self._tile_index is None:
+                        self._tile_index = wmomap.tile_index(self.archives)
+                    tiles = [t for t in self._tile_index["terrain"].get(directory.lower(), [])
+                             if wmomap.has_detail(self.archives, t[2])]
+                items = {"wmo": [], "terrain": tiles}
+                bounds = wmomap.world_bounds(items)
+                if bounds:
+                    out = {"name": directory, "items": items, "bounds": bounds}
+            with open(meta, "w", encoding="utf-8") as fh:
+                json.dump(out, fh)
+        self.wmo_maps[key] = out
+        return out
+
+    def terrain_entry(self, map_id):
+        lay = self.terrain_layout(map_id)
+        if not lay:
+            return None
+        b = lay["bounds"]
+        return {"kind": "terrain", "id": map_id, "map": map_id, "area": 0, "name": lay["name"],
+                "left": b["left"], "right": b["right"], "top": b["top"], "bottom": b["bottom"]}
+
     def wmo_entries(self, map_id):
         lay = self.wmo_layout(map_id)
         if not lay:
@@ -193,6 +227,8 @@ class Basemaps:
             return f"floor_{entry['map']}_{entry['floor']}"
         if entry["kind"] == "wmo":
             return f"wmo_{entry['map']}"
+        if entry["kind"] == "terrain":
+            return f"terrain_{entry['map']}"
         return f"zone_{entry['id']}"
 
     def ensure(self, entry):
@@ -223,6 +259,9 @@ class Basemaps:
             return None
         if entry["kind"] == "wmo":
             lay = self.wmo_layout(entry["map"])
+            return wmomap.render(self.archives, lay["items"], lay["bounds"]) if lay else None
+        if entry["kind"] == "terrain":
+            lay = self.terrain_layout(entry["map"])
             return wmomap.render(self.archives, lay["items"], lay["bounds"]) if lay else None
         canvas = Image.new("RGB", (1024, 768), (40, 34, 26))
         name = entry["name"]
@@ -265,6 +304,8 @@ class Basemaps:
         for e in self.floors + self.areas:
             if self.key(e) == key:
                 return e
+        if key.startswith("terrain_") and key[8:].isdigit():
+            return self.terrain_entry(int(key[8:]))
         if key.startswith("wmo_") and key[4:].isdigit():
             found = self.wmo_entries(int(key[4:]))
             return found[0] if found else None
@@ -303,7 +344,9 @@ class Basemaps:
 
     def all_entries(self):
         wmo = [e for m in sorted(self.map_dirs()) for e in self.wmo_entries(m)]
-        return self.floors + self.areas + wmo
+        continents = sorted({a["map"] for a in self.areas if not a["area"]})
+        terrain = [e for e in (self.terrain_entry(m) for m in continents) if e]
+        return self.floors + self.areas + wmo + terrain
 
     def verify(self, map_id, points):
         floors = [f for f in self.floors if f["map"] == map_id]

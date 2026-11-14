@@ -7,7 +7,7 @@ import time
 from . import telemetry
 from .basemap import Basemaps
 from .catalog import Catalog
-from .layers import StaticLayers
+from .layers import StaticLayers, file_sig, map_offsets
 from .live import LiveFeed, recent_events
 from .worlddb import WorldDb
 
@@ -72,6 +72,7 @@ class App:
         self.cores = {name: CoreContext(core, cfg.data_dir) for name, core in cfg.cores.items()}
         self.last_ingest = None
         self.listeners = []
+        self.atlas_cache = {}
 
     def ingest(self):
         added = 0
@@ -114,6 +115,32 @@ class App:
         card["events"] = recent_events(ctx.core.logs, ctx.live.newest_ts, None, 3600, name=card["name"], limit=40)
         card["runs"] = self.catalog.runs_by_host(core, card["name"])
         return card
+
+    def atlas(self, core):
+        ctx = self.cores[core]
+        sig = file_sig(os.path.join(ctx.core.logs, "livemap_manifest.json"))
+        cached = self.atlas_cache.get(core)
+        if cached and cached[0] == sig:
+            return cached[1]
+        out = []
+        for map_id, (ox, oy) in sorted(map_offsets(ctx.core.logs).items()):
+            info = ctx.map_info(map_id)
+            base = pick_base(info["basemaps"])
+            if base and base["kind"] == "zone" and not base["area"]:
+                terrain = ctx.basemaps.terrain_entry(map_id)
+                base = ctx.basemaps.describe(terrain) if terrain else base
+            extent = base["bounds"] if base else info["extent"]
+            if extent is None and ctx.world.available():
+                try:
+                    extent = ctx.world.map_extent(map_id)
+                except Exception:
+                    extent = None
+            if extent is None:
+                continue
+            out.append({"id": map_id, "name": info["name"], "off": [ox, oy], "base": base, "extent": extent})
+        result = {"core": core, "maps": out}
+        self.atlas_cache[core] = (sig, result)
+        return result
 
     def live_intents(self, core, map_id, seconds):
         ctx = self.cores[core]
@@ -235,6 +262,16 @@ class App:
             if best is None or score > best[1]:
                 best = (map_id, score)
         return (best[0], "guess") if best and best[1] else (None, None)
+
+
+def pick_base(basemaps):
+    def size(b):
+        return abs(b["bounds"]["top"] - b["bounds"]["bottom"]) * abs(b["bounds"]["left"] - b["bounds"]["right"])
+    for kind, test in (("zone", lambda b: not b["area"]), ("floor", None), ("zone", None), ("wmo", None)):
+        found = [b for b in basemaps if b["kind"] == kind and (test is None or test(b))]
+        if found:
+            return min(found, key=lambda b: b.get("floor") or 0) if kind == "floor" else max(found, key=size)
+    return None
 
 
 def inside(b, x, y, margin=0.0):

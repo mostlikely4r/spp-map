@@ -23,6 +23,16 @@ const W = {
   on: { ...DEFAULT_LAYERS, ...(JSON.parse(store('wlayers') || 'null') || {}) },
 };
 
+const ATLAS_LAYERS = new Set(['bots', 'names', 'labels']);
+
+function atlasMode() { return W.map === 'atlas'; }
+
+function bpos(map, x, y) {
+  if (!atlasMode()) return ll(x, y);
+  const off = W.offsets[map];
+  return off ? ll(x + off[0], y + off[1]) : null;
+}
+
 function wSaveLayers() { store('wlayers', JSON.stringify(W.on)); }
 
 function stopWorld() {
@@ -89,10 +99,15 @@ async function worldPage(core, mapId) {
   view.textContent = '';
   const first = await api('live' + (core ? '?core=' + encodeURIComponent(core) : ''));
   W.core = first.core;
-  if (mapId === null || mapId === undefined || isNaN(mapId)) mapId = first.maps.length ? first.maps[0].id : 0;
+  if (mapId === null || mapId === undefined || (mapId !== 'atlas' && isNaN(mapId))) mapId = first.maps.length ? first.maps[0].id : 0;
   W.map = mapId;
   if (location.pathname !== `/w/${W.core}/${W.map}`) history.replaceState({}, '', `/w/${W.core}/${W.map}` + location.search);
-  W.info = await api(`mapinfo?core=${W.core}&map=${W.map}`);
+  if (atlasMode()) {
+    const atlas = await api(`atlas?core=${W.core}`);
+    W.atlas = atlas.maps;
+    W.offsets = Object.fromEntries(atlas.maps.map(m => [m.id, m.off]));
+    W.info = { id: 'atlas', name: 'All maps (atlas)', basemaps: [], zones: [], extent: null };
+  } else W.info = await api(`mapinfo?core=${W.core}&map=${W.map}`);
 
   const mapSelect = el('select', { class: 'wsel', onchange: e => go(`/w/${W.core}/${e.target.value}`) });
   const colorSelect = el('select', { class: 'wsel', onchange: e => { W.color = e.target.value; store('wcolor', W.color); redrawBots(); legend(); } },
@@ -111,7 +126,7 @@ async function worldPage(core, mapId) {
       const hits = await api(`live/find?core=${W.core}&q=${encodeURIComponent(q)}`);
       for (const h of hits) results.append(el('div', { class: 'row', onclick: () => {
         results.textContent = ''; search.value = '';
-        if (h.map === W.map) selectBot(h.guid, true); else go(`/w/${W.core}/${h.map}?bot=${h.guid}`);
+        if (h.map === W.map || atlasMode()) selectBot(h.guid, true); else go(`/w/${W.core}/${h.map}?bot=${h.guid}`);
       } }, el('span', { class: 'name' }, h.name), el('span', { class: 'meta' }, ` level ${h.level} · ${h.bot ? 'bot' : 'player'} · map ${h.map}`)));
       if (!hits.length) results.append(el('div', { class: 'row meta' }, 'nobody online by that name'));
     }, 300);
@@ -133,8 +148,9 @@ async function worldPage(core, mapId) {
   };
   W.renderer = L.canvas({ padding: 0.3 });
   drawBase();
-  for (const [key, label] of [['bots', 'bots'], ['names', 'names'], ['zones', 'zone maps'], ['labels', 'zone names'], ['events', 'deaths / quests / levels'],
+  for (const [key, label] of [['bots', 'bots'], ['names', 'names'], ['zones', 'zone maps'], ['labels', atlasMode() ? 'map names' : 'zone names'], ['events', 'deaths / quests / levels'],
     ['intents', 'travel intent'], ['npcs', 'NPCs'], ['objects', 'objects'], ['nodes', 'travel nodes'], ['tele', 'teleport cache']]) {
+    if (atlasMode() && !ATLAS_LAYERS.has(key)) continue;
     const chip = el('span', { class: 'chip' + (W.on[key] ? ' on' : '') }, label);
     chip.onclick = () => { W.on[key] = !W.on[key]; chip.classList.toggle('on', W.on[key]); wSaveLayers(); applyLayer(key); };
     chips.append(chip);
@@ -171,8 +187,26 @@ function pickBase() {
 
 function imgBounds(b) { return L.latLngBounds(ll(b.bottom, b.left), ll(b.top, b.right)); }
 
+function drawAtlas() {
+  const all = [];
+  for (const m of W.atlas) {
+    const [ox, oy] = m.off;
+    const e = m.extent;
+    const b = { top: e.top + ox, bottom: e.bottom + ox, left: e.left + oy, right: e.right + oy };
+    const box = imgBounds(b);
+    all.push(box);
+    if (m.base) L.imageOverlay(`/basemap/${W.core}/${m.base.key}.webp`, box).addTo(W.layers.base);
+    else L.rectangle(box, { color: '#576574', weight: 1, fill: false, interactive: false }).addTo(W.layers.base);
+  }
+  if (!W.fitted && all.length) { mapObj.fitBounds(all.reduce((a, b) => a.extend(b), L.latLngBounds(all[0].getSouthWest(), all[0].getNorthEast()))); W.fitted = true; }
+  const v = new URLSearchParams(location.search);
+  if (!W.viewApplied && v.has('z')) { mapObj.setView(ll(+v.get('x'), +v.get('y')), +v.get('z')); W.fitted = true; }
+  W.viewApplied = true;
+}
+
 function drawBase() {
   W.layers.base.clearLayers();
+  if (atlasMode()) return drawAtlas();
   const { continent, floors, zones, wmo } = pickBase();
   W.floor = W.floor && floors.some(f => f.floor === W.floor) ? W.floor : (floors[0] && floors[0].floor);
   let base = continent;
@@ -199,8 +233,24 @@ function drawBase() {
 
 function area(b) { return Math.abs(b.top - b.bottom) * Math.abs(b.left - b.right); }
 
+function updateAtlasLabels() {
+  W.layers.labels.clearLayers();
+  if (!W.on.labels) return;
+  const view = mapObj.getBounds();
+  const px = Math.pow(2, mapObj.getZoom());
+  for (const m of W.atlas) {
+    const [ox, oy] = m.off;
+    const e = m.extent;
+    const w = Math.abs(e.left - e.right);
+    const at = ll(e.top + ox - Math.abs(e.top - e.bottom) * 0.04, (e.left + e.right) / 2 + oy);
+    if (w * px < 110 || !view.contains(at)) continue;
+    L.marker(at, { icon: L.divIcon({ className: 'zlabel', html: '<span>' + escapeHtml(m.name) + '</span>', iconSize: null }), interactive: false }).addTo(W.layers.labels);
+  }
+}
+
 function updateZones() {
   if (!W.layers) return;
+  if (atlasMode()) return updateAtlasLabels();
   const { continent, zones } = pickBase();
   W.layers.zones.clearLayers();
   W.layers.labels.clearLayers();
@@ -232,7 +282,7 @@ function applyLayer(key) {
   const layer = { bots: W.layers.bots, zones: W.layers.zones, labels: W.layers.labels, npcs: W.layers.npcs, objects: W.layers.objects,
     nodes: W.layers.nodes, events: W.layers.events, tele: W.layers.tele, intents: W.layers.intents }[key];
   if (key === 'names') return updateNames();
-  if (!layer) return;
+  if (!layer || (atlasMode() && !ATLAS_LAYERS.has(key))) return;
   if (W.on[key]) {
     layer.addTo(mapObj);
     if (key === 'zones' || key === 'labels') updateZones();
@@ -254,8 +304,10 @@ function ingestSnapshot(snap) {
   W.snap = snap;
   const sel = W.ui.mapSelect;
   const known = new Map(snap.maps.map(m => [m.id, m]));
-  if (!known.has(W.map)) known.set(W.map, { id: W.map, name: W.info.name, bots: 0, players: 0 });
+  if (!known.has(W.map) && !atlasMode()) known.set(W.map, { id: W.map, name: W.info.name, bots: 0, players: 0 });
   sel.textContent = '';
+  const total = snap.maps.reduce((n, m) => n + m.bots, 0);
+  sel.append(el('option', { value: 'atlas', selected: atlasMode() ? 'selected' : null }, `All maps, atlas (${total})`));
   for (const m of [...known.values()].sort((a, b) => b.bots - a.bots))
     sel.append(el('option', { value: m.id, selected: m.id === W.map ? 'selected' : null }, `${m.name} (${m.bots}${m.players ? ', ' + m.players + ' players' : ''})`));
   redrawBots();
@@ -267,7 +319,7 @@ function ingestSnapshot(snap) {
 function redrawBots() {
   if (!W.snap) return;
   const seen = new Set();
-  const multiFloor = pickBase().floors.length > 1;
+  const multiFloor = !atlasMode() && pickBase().floors.length > 1;
   for (const r of W.snap.bots) {
     const guid = col(r, 'guid');
     if (!passesFilter(r)) continue;
@@ -277,7 +329,8 @@ function redrawBots() {
     const style = { radius: player ? 6 : 4, color: player ? '#fff' : '#000', weight: player ? 2 : 1, fillColor: botColor(r),
       fillOpacity: offFloor ? 0.25 : 0.95, opacity: offFloor ? 0.3 : 1, renderer: W.renderer };
     let m = W.markers.get(guid);
-    const pos = ll(col(r, 'x'), col(r, 'y'));
+    const pos = bpos(col(r, 'map'), col(r, 'x'), col(r, 'y'));
+    if (!pos) { seen.delete(guid); continue; }
     if (!m) {
       m = L.circleMarker(pos, style);
       m.on('click', e => { L.DomEvent.stopPropagation(e); selectBot(guid, false); });
@@ -324,6 +377,7 @@ function legend() {
 }
 
 async function loadEvents() {
+  if (atlasMode()) return;
   if (!W.on.events) return;
   const rows = await api(`live/events?core=${W.core}&map=${W.map}&seconds=1800&kinds=death,levelup,quest,pvp`);
   W.layers.events.clearLayers();
@@ -337,6 +391,7 @@ async function loadEvents() {
 function refreshViewportLayers() { for (const k of ['npcs', 'objects', 'nodes', 'tele']) if (W.on[k]) loadViewportLayer(k); }
 
 async function loadIntents() {
+  if (atlasMode()) return;
   const rows = await api(`live/intents?core=${W.core}&map=${W.map}&seconds=900`);
   const layer = W.layers.intents;
   layer.clearLayers();
@@ -353,6 +408,7 @@ async function loadIntents() {
 }
 
 async function loadViewportLayer(key) {
+  if (atlasMode()) return;
   const b = boundsParams();
   const kind = { npcs: 'creatures', objects: 'objects', nodes: 'nodes', tele: 'telecache' }[key];
   const q = new URLSearchParams({ core: W.core, map: W.map, kind, ...b });
@@ -412,11 +468,12 @@ async function refreshSelected(center) {
   let card;
   try { card = await api(`live/bot?core=${W.core}&guid=${guid}`); } catch (e) { W.ui.sheet.classList.remove('hidden'); W.ui.sheet.textContent = 'This bot is not online any more.'; return; }
   if (W.selected !== guid) return;
-  if (card.map !== W.map) { go(`/w/${W.core}/${card.map}?bot=${guid}`); return; }
+  if (card.map !== W.map && !atlasMode()) { go(`/w/${W.core}/${card.map}?bot=${guid}`); return; }
   W.layers.sel.clearLayers();
-  if (card.trail.length > 1) L.polyline(card.trail.map(p => ll(p[0], p[1])), { color: '#28c8ff', weight: 3, opacity: 0.85 }).addTo(W.layers.sel);
-  L.circleMarker(ll(card.x, card.y), { radius: 11, color: '#28c8ff', weight: 3, fill: false }).addTo(W.layers.sel);
-  if (center || W.follow) mapObj.setView(ll(card.x, card.y), Math.max(mapObj.getZoom(), center ? -1 : mapObj.getZoom()));
+  const here = bpos(card.map, card.x, card.y);
+  if (card.trail.length > 1 && here) L.polyline(card.trail.map(p => bpos(card.map, p[0], p[1])), { color: '#28c8ff', weight: 3, opacity: 0.85 }).addTo(W.layers.sel);
+  if (here) L.circleMarker(here, { radius: 11, color: '#28c8ff', weight: 3, fill: false }).addTo(W.layers.sel);
+  if (here && (center || W.follow)) mapObj.setView(here, Math.max(mapObj.getZoom(), center ? (atlasMode() ? -3 : -1) : mapObj.getZoom()));
   renderCard(card);
 }
 

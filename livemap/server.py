@@ -136,7 +136,7 @@ class Handler(BaseHTTPRequestHandler):
             core = q.get("core") or app.live_core()
             if core not in app.cores:
                 return self.send_json({"error": "no core with live data"}, 404)
-            map_id = int(q["map"]) if q.get("map", "") != "" else None
+            map_id = int(q["map"]) if q.get("map", "") not in ("", "atlas") else None
             return self.send_json(app.live_snapshot(core, map_id))
         if method == "GET" and name == "live/bot":
             card = app.bot_card(q["core"], int(q["guid"]))
@@ -149,6 +149,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(app.live_events(q["core"], map_id, min(int(q.get("seconds", 1800)), 86400), kinds))
         if method == "GET" and name == "live/intents":
             return self.send_json(app.live_intents(q["core"], int(q["map"]), min(int(q.get("seconds", 900)), 86400)))
+        if method == "GET" and name == "atlas":
+            return self.send_json(app.atlas(q["core"]))
         if method == "GET" and name == "mapinfo":
             return self.send_json(app.cores[q["core"]].map_info(int(q["map"])))
         if method == "GET" and name == "layer":

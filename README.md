@@ -34,11 +34,15 @@ What works today:
   the outdoor terrain minimap underneath (blank filler tiles dropped, clipped to where the map has
   spawns). `python -m livemap verify` checks every instance map: the share of world-database
   spawns that land on art.
+- **Atlas view** (`/w/<core>/atlas`, "All maps" in the map picker). Every continent and instance on one
+  canvas at this boot's server offsets (the old QGIS layout), continents drawn from the client's
+  terrain minimap so land does not overlap, instances from their indoor art, with every online bot.
+  Placement is computed in the browser from the manifest offsets, so a restart never needs a rebuild.
 - **Phone first.** Mobile layout, short links (`/r/<run>`, `/t/<core>/<test>`), and an optional
   Cloudflare quick tunnel with token login, so you can use it away from the PC.
 - **Snapshots.** `livemap snapshot` renders a run page to a PNG (also at `/snapshot/run/<id>.png`).
 
-Planned next: the all-continents atlas view, replay
+Planned next: replay
 scrubber, performance graphs, favourite bots, trend movies, and the remaining QGIS layers. See the design plan in
 the SPP_Server repo (`.agents/docs/livemap-design.md`).
 
