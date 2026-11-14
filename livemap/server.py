@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, quote, urlparse
 from . import botconf, snapshot
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-PAGE_ROUTES = re.compile(r"^/($|r/\d+$|t/[^/]+/.+$|flips$|clusters$|test$|settings$)")
+PAGE_ROUTES = re.compile(r"^/($|r/\d+$|t/[^/]+/.+$|flips$|clusters$|test$|settings$|w$|w/.*$)")
 COOKIE = "lm_token"
 
 
@@ -64,11 +64,17 @@ class Handler(BaseHTTPRequestHandler):
             if method == "GET" and PAGE_ROUTES.match(path):
                 return self.send_file(os.path.join(STATIC, "index.html"))
             if method == "GET" and path.startswith("/static/"):
-                return self.send_file(os.path.join(STATIC, os.path.basename(path)), cache=True)
+                name = os.path.basename(path)
+                return self.send_file(os.path.join(STATIC, name), cache=name.startswith("leaflet"))
             if method == "GET" and path.startswith("/basemap/"):
                 _, _, core, name = path.split("/", 3)
                 ctx = self.app.cores.get(core)
-                file = ctx.basemaps.path(name) if ctx else None
+                if not ctx:
+                    file = None
+                elif name.endswith(".webp"):
+                    file = ctx.basemaps.image_for_key(name[:-5])
+                else:
+                    file = ctx.basemaps.path(name)
                 return self.send_file(file, cache=True) if file else self.send_text(404, "no basemap")
             if method == "GET" and path.startswith("/snapshot/run/"):
                 run_id = int(re.sub(r"\D", "", path.rsplit("/", 1)[1]))
@@ -126,6 +132,31 @@ class Handler(BaseHTTPRequestHandler):
             ctx = app.cores[q["core"]]
             bounds = {k: float(q[k]) for k in ("left", "right", "top", "bottom")}
             return self.send_json(ctx.world.travel_nodes(int(q["map"]), bounds))
+        if method == "GET" and name == "live":
+            core = q.get("core") or app.live_core()
+            if core not in app.cores:
+                return self.send_json({"error": "no core with live data"}, 404)
+            map_id = int(q["map"]) if q.get("map", "") != "" else None
+            return self.send_json(app.live_snapshot(core, map_id))
+        if method == "GET" and name == "live/bot":
+            card = app.bot_card(q["core"], int(q["guid"]))
+            return self.send_json(card) if card else self.send_json({"error": "bot not online"}, 404)
+        if method == "GET" and name == "live/find":
+            return self.send_json(app.cores[q["core"]].live.find(q.get("q", "")))
+        if method == "GET" and name == "live/events":
+            kinds = set(q["kinds"].split(",")) if q.get("kinds") else None
+            map_id = int(q["map"]) if q.get("map", "") != "" else None
+            return self.send_json(app.live_events(q["core"], map_id, min(int(q.get("seconds", 1800)), 86400), kinds))
+        if method == "GET" and name == "mapinfo":
+            return self.send_json(app.cores[q["core"]].map_info(int(q["map"])))
+        if method == "GET" and name == "layer":
+            ctx = app.cores[q["core"]]
+            bounds = {k: float(q[k]) for k in ("left", "right", "top", "bottom")}
+            if q["kind"] == "nodes":
+                return self.send_json(ctx.world.travel_nodes(int(q["map"]), bounds))
+            if q["kind"] not in ("creatures", "objects"):
+                return self.send_json({"error": "unknown layer"}, 404)
+            return self.send_json(ctx.world.spawn_layer(q["kind"], int(q["map"]), bounds))
         if method == "POST" and name == "triage":
             b = self.body()
             cat.set_triage(b["core"], b["test"], b.get("bucket"), b.get("note"))

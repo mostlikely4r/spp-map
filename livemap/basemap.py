@@ -30,9 +30,13 @@ class Basemaps:
         except OSError:
             return []
         areas = []
+        self.area_names_by_map = {}
         for r in recs:
             left, right, top, bottom = (as_float(v) for v in r[4:8])
+            self.area_names_by_map.setdefault(r[1], dbc_string(strings, r[3]))
             if left == right or top == bottom:
+                self.zero_areas = getattr(self, "zero_areas", {})
+                self.zero_areas.setdefault(r[1], []).append(dbc_string(strings, r[3]))
                 continue
             areas.append({
                 "kind": "zone", "id": r[0], "map": r[1], "area": r[2], "name": dbc_string(strings, r[3]),
@@ -58,15 +62,21 @@ class Basemaps:
         if not os.path.exists(path):
             return []
         recs, _ = read_dbc(path)
-        by_map = {a["map"]: a for a in self.areas}
+        names = getattr(self, "area_names_by_map", {})
         floors = []
         for r in recs:
             min_y, max_y, min_x, max_x = (as_float(v) for v in r[3:7])
-            area = by_map.get(r[1])
-            if not area or min_y == max_y:
+            name = names.get(r[1])
+            if any(a["map"] == r[1] and not a["area"] for a in self.areas):
+                cx, cy = (min_x + max_x) / 2, (min_y + max_y) / 2
+                inside = [a for a in self.areas if a["map"] == r[1] and a["area"] and self.contains(a, cx, cy)]
+                options = getattr(self, "zero_areas", {}).get(r[1], []) + [a["name"] for a in sorted(inside, key=self.area_size)]
+                name = next((n for n in options if self.archives.available() and self.archives.read(
+                    f"Interface\\WorldMap\\{n}\\{n}{r[2]}_1.blp")), None)
+            if not name or min_y == max_y:
                 continue
             floors.append({
-                "kind": "floor", "id": r[0], "map": r[1], "floor": r[2], "name": area["name"],
+                "kind": "floor", "id": r[0], "map": r[1], "floor": r[2], "name": name,
                 "left": max_y, "right": min_y, "top": max_x, "bottom": min_x,
             })
         return floors
@@ -190,6 +200,45 @@ class Basemaps:
                         canvas.paste(tile, (ov["x"] + tx * 256, ov["y"] + ty * 256), tile)
         return canvas.crop((0, 0, MAP_W, MAP_H))
 
+    def describe(self, entry):
+        return {"key": self.key(entry), "kind": entry["kind"], "name": entry["name"], "area": entry.get("area"),
+                "floor": entry.get("floor"), "bounds": self.bounds_of(entry)}
+
+    def entries_for(self, map_id):
+        return [self.describe(e) for e in self.floors + self.areas if e["map"] == map_id]
+
+    def entry_by_key(self, key):
+        for e in self.floors + self.areas:
+            if self.key(e) == key:
+                return e
+        return None
+
+    def image_for_key(self, key):
+        found = self.path(key + ".webp")
+        if found:
+            return found
+        entry = self.entry_by_key(key)
+        info = self.ensure(entry) if entry else None
+        return self.path(info["image"]) if info else None
+
+    def area_name(self, area_id):
+        if getattr(self, "_area_names", None) is None:
+            names = {}
+            try:
+                recs, strings = read_dbc(self.dbc_path("AreaTable"))
+                for r in recs:
+                    if len(r) > 11:
+                        names[r[0]] = dbc_string(strings, r[11])
+            except OSError:
+                pass
+            self._area_names = names
+        return self._area_names.get(area_id, "")
+
+    def map_names(self):
+        if getattr(self, "_map_names", None) is None:
+            self._map_names = load_map_names(self.dbc_path("Map"))
+        return self._map_names
+
     def path(self, key):
         safe = os.path.basename(key)
         path = os.path.join(self.out_dir, safe)
@@ -203,3 +252,26 @@ class Basemaps:
             if progress:
                 progress(entry, info)
         return done
+
+
+def load_map_names(path):
+    try:
+        recs, strings = read_dbc(path)
+    except OSError:
+        return {}
+    best, best_score = None, -1
+    for idx in range(2, 7):
+        score = 0
+        for r in recs:
+            if idx < len(r):
+                s = dbc_string(strings, r[idx]) if 0 < r[idx] < len(strings) and strings[r[idx] - 1:r[idx]] == b"\0" else ""
+                if s and s[0].isupper() and " " in s:
+                    score += 1
+        if score > best_score:
+            best, best_score = idx, score
+    out = {}
+    for r in recs:
+        v = r[best] if best is not None and best < len(r) else 0
+        name = dbc_string(strings, v) if 0 < v < len(strings) and strings[v - 1:v] == b"\0" else ""
+        out[r[0]] = name or dbc_string(strings, r[1]) or f"map {r[0]}"
+    return out

@@ -7,6 +7,7 @@ import time
 from . import telemetry
 from .basemap import Basemaps
 from .catalog import Catalog
+from .live import LiveFeed, recent_events
 from .worlddb import WorldDb
 
 MARGIN = 0.35
@@ -17,6 +18,7 @@ class CoreContext:
         self.core = core
         self.data_dir = data_dir
         self._basemaps = None
+        self._live = None
         self.world = WorldDb(core)
 
     @property
@@ -24,6 +26,27 @@ class CoreContext:
         if self._basemaps is None:
             self._basemaps = Basemaps(self.core, self.data_dir)
         return self._basemaps
+
+    @property
+    def live(self):
+        if self._live is None:
+            self._live = LiveFeed(self.core, self.basemaps.wmo_floor)
+        return self._live
+
+    def map_info(self, map_id):
+        bm = self.basemaps
+        entries = bm.entries_for(map_id)
+        zones = [{"name": bm.area_name(e["area"]) or e["name"], "x": (e["bounds"]["top"] + e["bounds"]["bottom"]) / 2,
+                  "y": (e["bounds"]["left"] + e["bounds"]["right"]) / 2, "key": e["key"]}
+                 for e in entries if e["kind"] == "zone" and e["area"]]
+        extent = None
+        if not entries and self.world.available():
+            try:
+                extent = self.world.map_extent(map_id)
+            except Exception:
+                extent = None
+        return {"id": map_id, "name": bm.map_names().get(map_id, f"map {map_id}"), "basemaps": entries, "zones": zones,
+                "extent": extent}
 
 
 class App:
@@ -50,6 +73,35 @@ class App:
                     print("ingest failed:", exc)
                 time.sleep(every)
         threading.Thread(target=loop, daemon=True, name="ingest").start()
+
+    def live_core(self):
+        best = max(self.cores.values(), key=lambda c: c.live.mtime(), default=None)
+        return best.core.name if best else None
+
+    def live_snapshot(self, core, map_id):
+        ctx = self.cores[core]
+        snap = ctx.live.snapshot(map_id)
+        names = ctx.basemaps.map_names()
+        for m in snap["maps"]:
+            m["name"] = names.get(m["id"], f"map {m['id']}")
+        return snap
+
+    def bot_card(self, core, guid):
+        ctx = self.cores[core]
+        card = ctx.live.bot(guid)
+        if not card:
+            return None
+        names = ctx.basemaps.map_names()
+        card["map_name"] = names.get(card["map"], f"map {card['map']}")
+        card["zone_name"] = ctx.basemaps.area_name(card["zone"])
+        card["area_name"] = ctx.basemaps.area_name(card["area"])
+        card["events"] = recent_events(ctx.core.logs, ctx.live.newest_ts, None, 3600, name=card["name"], limit=40)
+        card["runs"] = self.catalog.runs_by_host(core, card["name"])
+        return card
+
+    def live_events(self, core, map_id, seconds, kinds):
+        ctx = self.cores[core]
+        return recent_events(ctx.core.logs, ctx.live.newest_ts, map_id, seconds, kinds=kinds)
 
     def quest_info(self, core, quest_id):
         ctx = self.cores[core]

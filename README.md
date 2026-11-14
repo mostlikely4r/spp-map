@@ -4,7 +4,17 @@ A browser map and test explorer for SPP / CMaNGOS + PlayerBots servers (vanilla,
 It replaces the old QGIS project (kept in [`legacy/`](legacy/README_QGIS.md) until the new map covers
 everything it did).
 
-What works today (phase 1):
+What works today:
+
+- **Live world map** (`/w`). Every online bot and player on the painted continent, zone and dungeon
+  floor maps, refreshed every 3 seconds. Colour by faction, class, level, state or health; filter to
+  players and their party bots, fights, deaths, groups, bots running a test or inactive bots. Tap a
+  bot for its card: level, race/class, zone, health, money, group leader, its trail over the last
+  15 minutes, the last hour of events and its recent test runs. Follow a bot, search by name, share
+  the exact view as a link. Layers: zone maps and names, recent deaths / quests / level-ups, NPCs
+  (coloured by role: flight master, inn, vendor, trainer, quest giver, elite...), game objects and
+  the bots' travel network. Dungeons with painted floor maps (WotLK) get floor buttons; others open
+  on their NPCs and travel paths.
 
 - **Test explorer.** Every `[BOTTEST]` result from every boot and every core goes into one small
   database: latest verdict, run history, pass rate, **"flipped to PASS"** and **regression** feeds,
@@ -20,8 +30,8 @@ What works today (phase 1):
   Cloudflare quick tunnel with token login, so you can use it away from the PC.
 - **Snapshots.** `livemap snapshot` renders a run page to a PNG (also at `/snapshot/run/<id>.png`).
 
-Planned next: exact positions with map id and floor from the bot module, live mode, replay scrubber,
-performance graphs, favourite bots, trend movies, and the remaining QGIS layers. See the design plan in
+Planned next: indoor minimap art for classic/TBC dungeons, the all-continents atlas view, replay
+scrubber, performance graphs, favourite bots, trend movies, and the remaining QGIS layers. See the design plan in
 the SPP_Server repo (`.agents/docs/livemap-design.md`).
 
 ## Install
@@ -61,6 +71,7 @@ the same (`data/access_token.txt`; delete it to issue a new one).
 | --- | --- |
 | Test explorer | `bot_test_results*.log` in `Settings/<core>/logs` (the test framework writes these) |
 | Quest markers, travel nodes | world database (read from `mangosd.conf`) |
+| Live world map | `bot_positions.csv` (below); race/class from the characters database (read from `mangosd.conf`) |
 | Exact bot track on the run page | `bot_positions.csv` (every bot, every 5 s, map + world position + floor) and `bot_test_runs.csv` (exact test start/end, last actions, travel target) in `AiPlayerbot.AllowedLogFiles`. Needs a PlayerBots build with the livemap data contract (manifest `contract: 1`) |
 | Older / fallback tracks | `bot_heartbeat.csv`, `bot_states.csv`, `bot_events.csv` (old builds: display coordinates only, map guessed) |
 | History across restarts | `AiPlayerbot.LogArchiveOnBoot = 1` (old logs are renamed `<name>_<YYYYmmdd_HHMMSS>.csv` instead of wiped; `LogArchiveKeepBoots` limits how many). Toggle it on the Settings page |
@@ -81,10 +92,11 @@ livemap/
   telemetry.py  time-sliced reads of the big CSV logs, display -> world coordinates
   basemap.py    painted zone / dungeon floor maps from the client
   clientdata.py MPQ + DBC + BLP reading
-  worlddb.py    quest givers / objectives / turn-ins, travel nodes
+  worlddb.py    quest givers / objectives / turn-ins, travel nodes, NPC / object layers
+  live.py       tails bot_positions.csv for the live map, bot cards, recent events
   app.py        run reconstruction (map choice, track, markers)
   server.py     HTTP API, token login, static files
   snapshot.py   PNG renderer
-  static/       web client (Leaflet, no build step)
+  static/       web client (Leaflet, no build step; world.js = live map)
 legacy/         the old QGIS project
 ```

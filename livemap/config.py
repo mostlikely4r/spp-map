@@ -22,6 +22,7 @@ class Core:
     world_db: DbInfo | None
     locale: str = "enUS"
     bot_conf: str = ""
+    mangosd_conf: str = ""
 
 
 @dataclass
@@ -49,15 +50,19 @@ def parse_db_info(text):
     return DbInfo(host, int(port), user, password, database)
 
 
-def read_world_db(mangosd_conf):
+def read_db(mangosd_conf, key):
     try:
         with open(mangosd_conf, encoding="utf-8", errors="replace") as fh:
             for line in fh:
-                if line.startswith("WorldDatabaseInfo"):
+                if line.startswith(key):
                     return parse_db_info(line.split("=", 1)[1])
     except OSError:
         return None
     return None
+
+
+def read_world_db(mangosd_conf):
+    return read_db(mangosd_conf, "WorldDatabaseInfo")
 
 
 def resolve(base, path):
@@ -100,6 +105,7 @@ def load(path):
             world_db=db,
             locale=entry.get("locale", "enUS"),
             bot_conf=bot_conf,
+            mangosd_conf=conf,
         )
     return cfg
 

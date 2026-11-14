@@ -2,6 +2,17 @@ import threading
 
 SPAWN_LIMIT = 40
 
+VANILLA_NPC_FLAGS = ((0x8, "flightmaster"), (0x80, "innkeeper"), (0x1000, "auctioneer"), (0x100, "banker"),
+                     (0x800, "battlemaster"), (0x20, "spirithealer"), (0x10, "trainer"), (0x4, "vendor"),
+                     (0x4000, "vendor"), (0x2, "questgiver"))
+LATER_NPC_FLAGS = ((0x2000, "flightmaster"), (0x10000, "innkeeper"), (0x200000, "auctioneer"), (0x20000, "banker"),
+                   (0x100000, "battlemaster"), (0x4000, "spirithealer"), (0x10, "trainer"), (0x80, "vendor"),
+                   (0x1000, "vendor"), (0x2, "questgiver"))
+GO_TYPES = {0: "door", 1: "button", 2: "questgiver", 3: "chest", 5: "generic", 6: "trap", 7: "chair", 8: "spellfocus",
+            9: "text", 10: "goober", 11: "transport", 13: "camera", 15: "transport", 17: "fishing", 18: "ritual",
+            19: "mailbox", 22: "spellcaster", 23: "meetingstone", 24: "flagstand", 25: "fishinghole",
+            26: "flagdrop", 29: "capturepoint"}
+
 
 class WorldDb:
     def __init__(self, core):
@@ -112,6 +123,62 @@ class WorldDb:
         }
         self.cache[key] = out
         return out
+
+    def npc_flags(self):
+        return VANILLA_NPC_FLAGS if self.core.name == "vanilla" else LATER_NPC_FLAGS
+
+    def npc_role(self, flags, rank):
+        for bit, role in self.npc_flags():
+            if flags & bit:
+                return role
+        if rank in (1, 2, 4):
+            return "elite"
+        if rank == 3:
+            return "boss"
+        return "mob"
+
+    def spawn_layer(self, kind, map_id, bounds, limit=2500, bins=48):
+        if kind == "creatures":
+            table, alias, tmpl, key = "creature", "c", "creature_template", "Entry"
+            cols = "c.guid, c.id, c.position_x, c.position_y, t.Name, t.MinLevel, t.MaxLevel, t.Rank, t.NpcFlags"
+        else:
+            table, alias, tmpl, key = "gameobject", "c", "gameobject_template", "entry"
+            cols = "c.guid, c.id, c.position_x, c.position_y, t.name, t.type"
+        where = (f"from {table} c join {tmpl} t on t.{key}=c.id where c.map=%s"
+                 " and c.position_x between %s and %s and c.position_y between %s and %s")
+        args = (map_id, bounds["bottom"], bounds["top"], bounds["right"], bounds["left"])
+        total = self.rows(f"select count(*) {where}", args)[0][0]
+        if total > limit:
+            cell = max(bounds["top"] - bounds["bottom"], bounds["left"] - bounds["right"]) / bins
+            rows = self.rows(
+                f"select floor(c.position_x/%s), floor(c.position_y/%s), count(*) {where} group by 1, 2",
+                (cell, cell) + args)
+            return {"binned": True, "total": total, "cell": cell,
+                    "bins": [[(float(i) + 0.5) * cell, (float(j) + 0.5) * cell, int(n)] for i, j, n in rows]}
+        feats = []
+        for r in self.rows(f"select {cols} {where}", args):
+            if kind == "creatures":
+                guid, entry, x, y, name, lo, hi, rank, flags = r
+                level = f"{lo}" if lo == hi else f"{lo}-{hi}"
+                feats.append([guid, entry, round(float(x), 1), round(float(y), 1), name, level,
+                              self.npc_role(int(flags or 0), int(rank or 0))])
+            else:
+                guid, entry, x, y, name, gtype = r
+                feats.append([guid, entry, round(float(x), 1), round(float(y), 1), name,
+                              GO_TYPES.get(int(gtype), "other")])
+        return {"binned": False, "total": total, "features": feats}
+
+    def map_extent(self, map_id):
+        key = ("extent", map_id)
+        if key not in self.cache:
+            r = self.rows("select min(position_x), max(position_x), min(position_y), max(position_y), count(*)"
+                          " from creature where map=%s", (map_id,))[0]
+            if not r[4]:
+                r = self.rows("select min(x), max(x), min(y), max(y), count(*) from ai_playerbot_travelnode"
+                              " where map_id=%s", (map_id,))[0]
+            self.cache[key] = None if not r[4] else {
+                "bottom": float(r[0]) - 60, "top": float(r[1]) + 60, "right": float(r[2]) - 60, "left": float(r[3]) + 60}
+        return self.cache[key]
 
     def travel_nodes(self, map_id, bounds, limit=4000):
         args = (map_id, bounds["bottom"], bounds["top"], bounds["right"], bounds["left"])

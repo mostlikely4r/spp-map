@@ -159,6 +159,12 @@ class Catalog:
     def run(self, run_id):
         return self.one("select * from runs where id=?", (run_id,))
 
+    def runs_by_host(self, core, host, limit=10):
+        return self.query(
+            "select id, ts, test, verdict, msg from runs where core=? and host=? order by ts desc, id desc limit ?",
+            (core, host, limit),
+        )
+
     def transitions(self, core=None, kind="flip", limit=50):
         cond = "verdict='PASS' and prev in ('FAIL','ABORT','IMPOSSIBLE')" if kind == "flip" else "verdict='FAIL' and prev='PASS'"
         args = []

@@ -62,6 +62,7 @@ function showError(err) {
 }
 
 async function route() {
+  if (typeof stopWorld === 'function') stopWorld();
   if (mapObj) { mapObj.remove(); mapObj = null; }
   const p = location.pathname;
   try {
@@ -70,6 +71,8 @@ async function route() {
     let m;
     if ((m = p.match(/^\/r\/(\d+)$/))) return await runPage(+m[1]);
     if ((m = p.match(/^\/t\/([^/]+)\/(.+)$/))) return await testPage(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
+    if (p === '/w' || p === '/w/') return await worldPage(state.core || null, null);
+    if ((m = p.match(/^\/w\/([^/]+)(?:\/(\d+))?$/))) return await worldPage(decodeURIComponent(m[1]), m[2] === undefined ? null : +m[2]);
     if (p === '/clusters') return await clustersPage();
     if (p === '/settings') return await settingsPage();
     return await homePage();
@@ -118,7 +121,7 @@ async function homePage() {
     tiles(),
     transitionList('Flipped to PASS', summaryCache.flips.slice(0, 5)),
     transitionList('Regressions (PASS → FAIL)', summaryCache.regressions.slice(0, 5)),
-    el('div', { class: 'tabs' }, el('a', { class: 'chip on', href: '/', 'data-link': 1 }, 'Tests'),
+    el('div', { class: 'tabs' }, el('a', { class: 'chip', href: '/w', 'data-link': 1 }, 'Live map'), el('a', { class: 'chip on', href: '/', 'data-link': 1 }, 'Tests'),
       el('a', { class: 'chip', href: '/clusters', 'data-link': 1 }, 'Failure groups'),
       el('a', { class: 'chip', href: '/settings', 'data-link': 1 }, 'Settings')),
     search,
