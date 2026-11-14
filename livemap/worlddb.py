@@ -168,6 +168,12 @@ class WorldDb:
                               GO_TYPES.get(int(gtype), "other")])
         return {"binned": False, "total": total, "features": feats}
 
+    def spawn_points(self):
+        out = {}
+        for m, x, y in self.rows("select map, position_x, position_y from creature"):
+            out.setdefault(int(m), []).append((float(x), float(y)))
+        return out
+
     def map_extent(self, map_id):
         key = ("extent", map_id)
         if key not in self.cache:

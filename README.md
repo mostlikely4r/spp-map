@@ -13,8 +13,8 @@ What works today:
   15 minutes, the last hour of events and its recent test runs. Follow a bot, search by name, share
   the exact view as a link. Layers: zone maps and names, recent deaths / quests / level-ups, NPCs
   (coloured by role: flight master, inn, vendor, trainer, quest giver, elite...), game objects and
-  the bots' travel network. Dungeons with painted floor maps (WotLK) get floor buttons; others open
-  on their NPCs and travel paths.
+  the bots' travel network. Dungeons with painted floor maps (WotLK) get floor buttons; every other
+  dungeon, raid and battleground shows its indoor minimap art (see below).
 
 - **Test explorer.** Every `[BOTTEST]` result from every boot and every core goes into one small
   database: latest verdict, run history, pass rate, **"flipped to PASS"** and **regression** feeds,
@@ -26,11 +26,17 @@ What works today:
   your own game client. Placement comes from the client's own tables (`WorldMapArea.dbc`,
   `WorldMapOverlay.dbc`, `DungeonMap.dbc`), so server coordinates land exactly on the art. No hand
   georeferencing.
+- **Indoor minimap art for every instance.** Dungeons without painted floor maps (all classic and TBC
+  instances, on every core) are drawn from the client's own minimap tiles: the dungeon building
+  (WMO) tiles placed through the map's `MODF` entry and each building section's bounding box, with
+  the outdoor terrain minimap underneath (blank filler tiles dropped, clipped to where the map has
+  spawns). `python -m livemap verify` checks every instance map: the share of world-database
+  spawns that land on art.
 - **Phone first.** Mobile layout, short links (`/r/<run>`, `/t/<core>/<test>`), and an optional
   Cloudflare quick tunnel with token login, so you can use it away from the PC.
 - **Snapshots.** `livemap snapshot` renders a run page to a PNG (also at `/snapshot/run/<id>.png`).
 
-Planned next: indoor minimap art for classic/TBC dungeons, the all-continents atlas view, replay
+Planned next: the all-continents atlas view, replay
 scrubber, performance graphs, favourite bots, trend movies, and the remaining QGIS layers. See the design plan in
 the SPP_Server repo (`.agents/docs/livemap-design.md`).
 
@@ -58,7 +64,8 @@ python -m livemap serve --tunnel   # also prints a https://....trycloudflare.com
 python -m livemap ingest           # index results once and print counts
 python -m livemap snapshot --run 1804
 python -m livemap snapshot --test "an improper burial"
-python -m livemap basemaps         # prebuild every painted map (otherwise built on first use)
+python -m livemap basemaps         # prebuild every map image (otherwise built on first use)
+python -m livemap verify           # spawns-on-art check per instance map (--core, --map, --threshold)
 ```
 
 Open the tunnel link once on your phone; it stores a cookie and drops the token from the address.
@@ -85,12 +92,13 @@ Blizzard art.
 
 ```
 livemap/
-  __main__.py   command line (serve, ingest, snapshot, basemaps)
+  __main__.py   command line (serve, ingest, snapshot, basemaps, verify)
   config.py     livemap.toml loading
   results.py    [BOTTEST] line + test name parsing
   catalog.py    SQLite: runs, flips, groups, triage, favourites
   telemetry.py  time-sliced reads of the big CSV logs, display -> world coordinates
   basemap.py    painted zone / dungeon floor maps from the client
+  wmomap.py     indoor (WMO) + terrain minimap art for instance maps
   clientdata.py MPQ + DBC + BLP reading
   worlddb.py    quest givers / objectives / turn-ins, travel nodes, NPC / object layers
   live.py       tails bot_positions.csv for the live map, bot cards, recent events

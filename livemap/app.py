@@ -25,7 +25,15 @@ class CoreContext:
     def basemaps(self):
         if self._basemaps is None:
             self._basemaps = Basemaps(self.core, self.data_dir)
+            if self.world.available():
+                self._basemaps.extent_hint = self.safe_extent
         return self._basemaps
+
+    def safe_extent(self, map_id):
+        try:
+            return self.world.map_extent(map_id)
+        except Exception:
+            return None
 
     @property
     def live(self):

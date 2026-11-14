@@ -161,18 +161,20 @@ function pickBase() {
   const continent = bms.find(b => b.kind === 'zone' && !b.area);
   const floors = bms.filter(b => b.kind === 'floor').sort((a, b) => a.floor - b.floor);
   const zones = bms.filter(b => b.kind === 'zone' && b.area);
-  return { continent, floors, zones };
+  const wmo = bms.find(b => b.kind === 'wmo');
+  return { continent, floors, zones, wmo };
 }
 
 function imgBounds(b) { return L.latLngBounds(ll(b.bottom, b.left), ll(b.top, b.right)); }
 
 function drawBase() {
   W.layers.base.clearLayers();
-  const { continent, floors, zones } = pickBase();
+  const { continent, floors, zones, wmo } = pickBase();
   W.floor = W.floor && floors.some(f => f.floor === W.floor) ? W.floor : (floors[0] && floors[0].floor);
   let base = continent;
   if (!base && floors.length) base = floors.find(f => f.floor === W.floor);
   if (!base && zones.length) base = zones.slice().sort((a, b) => area(b.bounds) - area(a.bounds))[0];
+  if (!base && wmo) base = wmo;
   W.base = base;
   if (base) {
     L.imageOverlay(`/basemap/${W.core}/${base.key}.webp`, imgBounds(base.bounds)).addTo(W.layers.base);

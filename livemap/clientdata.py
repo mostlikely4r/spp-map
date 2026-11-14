@@ -50,6 +50,21 @@ def archive_order(data_dir, locale):
     return sorted(found, key=rank)
 
 
+FILE_EXISTS = 0x80000000
+FILE_PACKED = 0x00000100 | 0x00000200 | 0x00010000
+
+
+def read_entry(arc, name):
+    entry = arc.get_hash_table_entry(name)
+    if entry is None:
+        return None
+    block = arc.block_table[entry.block_table_index]
+    if block.flags & FILE_EXISTS and not block.flags & FILE_PACKED and block.archived_size == block.size:
+        arc.file.seek(block.offset + arc.header["offset"])
+        return arc.file.read(block.size)
+    return arc.read_file(name)
+
+
 class ClientArchives:
     def __init__(self, data_dir, locale="enUS"):
         self.data_dir = data_dir
@@ -76,7 +91,7 @@ class ClientArchives:
                 if arc is None:
                     continue
                 try:
-                    data = arc.read_file(name)
+                    data = read_entry(arc, name)
                 except Exception:
                     data = None
                 if data:

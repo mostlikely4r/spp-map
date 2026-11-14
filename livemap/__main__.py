@@ -106,6 +106,39 @@ def cmd_basemaps(cfg, args):
         print(f"{name}: built {ctx.basemaps.build_all(progress)}")
 
 
+def cmd_verify(cfg, args):
+    app = App(cfg)
+    threshold = args.threshold
+    for name in args.core or list(cfg.cores):
+        ctx = app.cores[name]
+        if not ctx.basemaps.archives.available() or not ctx.world.available():
+            print(f"{name}: needs client data and the world database, skipped")
+            continue
+        bm = ctx.basemaps
+        names = bm.map_names()
+        points = ctx.world.spawn_points()
+        continents = {a["map"] for a in bm.areas if not a["area"]}
+        weak, checked, missing = [], 0, []
+        for map_id in sorted(points):
+            if map_id in continents or (args.map is not None and map_id != args.map):
+                continue
+            pts = points[map_id]
+            source, inside = bm.verify(map_id, pts)
+            label = f"{map_id:4} {names.get(map_id, '')}"
+            if source is None:
+                missing.append(label)
+                continue
+            checked += 1
+            share = inside / len(pts)
+            flag = "ok  " if share >= threshold else "LOW "
+            if share < threshold:
+                weak.append(label)
+            print(f"{name}: {flag}{share:6.1%} {inside:5}/{len(pts):<5} {source:15} {label}", flush=True)
+        print(f"{name}: {checked} maps checked, {len(weak)} below {threshold:.0%}, {len(missing)} without art")
+        for m in missing:
+            print(f"{name}:   no art  {m}")
+
+
 def main():
     parser = argparse.ArgumentParser(prog="livemap")
     parser.add_argument("--config", default=DEFAULT_CONFIG)
@@ -117,11 +150,15 @@ def main():
     p.add_argument("--run", type=int)
     p.add_argument("--test", help="search text; renders the latest matching run")
     p.add_argument("--out")
+    p = sub.add_parser("verify", help="check that DB spawns land on each map's art")
+    p.add_argument("--core", action="append")
+    p.add_argument("--map", type=int)
+    p.add_argument("--threshold", type=float, default=0.95)
     p = sub.add_parser("basemaps", help="prebuild painted basemaps from the client")
     p.add_argument("--core", action="append")
     args = parser.parse_args()
     cfg = config.load(args.config)
-    {"serve": cmd_serve, "ingest": cmd_ingest, "snapshot": cmd_snapshot, "basemaps": cmd_basemaps}[args.cmd](cfg, args)
+    {"serve": cmd_serve, "ingest": cmd_ingest, "snapshot": cmd_snapshot, "basemaps": cmd_basemaps, "verify": cmd_verify}[args.cmd](cfg, args)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ import math
 import os
 import threading
 
+from . import wmomap
 from .clientdata import ClientArchives, as_float, dbc_string, read_dbc
 
 MAP_W, MAP_H = 1002, 668
@@ -15,11 +16,14 @@ class Basemaps:
         self.out_dir = os.path.join(data_dir, "basemaps", core.name)
         os.makedirs(self.out_dir, exist_ok=True)
         self.archives = ClientArchives(core.client, core.locale)
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.areas = self.load_areas()
         self.overlays = self.load_overlays()
         self.floors = self.load_floors()
         self.wmo_floor = self.load_wmo_floors()
+        self.wmo_maps = {}
+        self.extent_hint = None
+        self._tile_index = None
 
     def dbc_path(self, name):
         return os.path.join(self.core.dbc, name + ".dbc")
@@ -111,7 +115,51 @@ class Basemaps:
     def candidates(self, map_id):
         zones = [a for a in self.areas if a["map"] == map_id]
         floors = [f for f in self.floors if f["map"] == map_id]
-        return floors + zones
+        return floors + self.wmo_entries(map_id) + zones
+
+    def map_dirs(self):
+        if getattr(self, "_map_dirs", None) is None:
+            try:
+                recs, strings = read_dbc(self.dbc_path("Map"))
+                self._map_dirs = {r[0]: dbc_string(strings, r[1]) for r in recs}
+            except OSError:
+                self._map_dirs = {}
+        return self._map_dirs
+
+    def wmo_layout(self, map_id):
+        if map_id in self.wmo_maps:
+            return self.wmo_maps[map_id]
+        meta = os.path.join(self.out_dir, f"wmo_{map_id}.layout.json")
+        if os.path.exists(meta):
+            with open(meta, encoding="utf-8") as fh:
+                self.wmo_maps[map_id] = json.load(fh)
+            return self.wmo_maps[map_id]
+        directory = self.map_dirs().get(map_id)
+        has_continent = any(a["map"] == map_id and not a["area"] for a in self.areas)
+        out = None
+        if directory and not has_continent and self.archives.available():
+            with self.lock:
+                if self._tile_index is None:
+                    self._tile_index = wmomap.tile_index(self.archives)
+                items = wmomap.layout(self.archives, directory, self._tile_index)
+            focus = self.extent_hint(map_id) if self.extent_hint else None
+            if focus and items["terrain"]:
+                items["terrain"] = [t for t in items["terrain"] if wmomap.overlaps(wmomap.terrain_rect(t[0], t[1]), focus, 100)]
+            bounds = wmomap.world_bounds(items)
+            if bounds:
+                out = {"name": directory, "items": items, "bounds": bounds}
+        with open(meta, "w", encoding="utf-8") as fh:
+            json.dump(out, fh)
+        self.wmo_maps[map_id] = out
+        return out
+
+    def wmo_entries(self, map_id):
+        lay = self.wmo_layout(map_id)
+        if not lay:
+            return []
+        b = lay["bounds"]
+        return [{"kind": "wmo", "id": map_id, "map": map_id, "area": 0, "name": lay["name"],
+                 "left": b["left"], "right": b["right"], "top": b["top"], "bottom": b["bottom"]}]
 
     @staticmethod
     def contains(entry, x, y, margin=0.0):
@@ -143,6 +191,8 @@ class Basemaps:
     def key(self, entry):
         if entry["kind"] == "floor":
             return f"floor_{entry['map']}_{entry['floor']}"
+        if entry["kind"] == "wmo":
+            return f"wmo_{entry['map']}"
         return f"zone_{entry['id']}"
 
     def ensure(self, entry):
@@ -171,6 +221,9 @@ class Basemaps:
         from PIL import Image
         if not self.archives.available():
             return None
+        if entry["kind"] == "wmo":
+            lay = self.wmo_layout(entry["map"])
+            return wmomap.render(self.archives, lay["items"], lay["bounds"]) if lay else None
         canvas = Image.new("RGB", (1024, 768), (40, 34, 26))
         name = entry["name"]
         found = 0
@@ -205,12 +258,16 @@ class Basemaps:
                 "floor": entry.get("floor"), "bounds": self.bounds_of(entry)}
 
     def entries_for(self, map_id):
-        return [self.describe(e) for e in self.floors + self.areas if e["map"] == map_id]
+        return [self.describe(e) for e in self.floors + self.areas if e["map"] == map_id] + [
+            self.describe(e) for e in self.wmo_entries(map_id)]
 
     def entry_by_key(self, key):
         for e in self.floors + self.areas:
             if self.key(e) == key:
                 return e
+        if key.startswith("wmo_") and key[4:].isdigit():
+            found = self.wmo_entries(int(key[4:]))
+            return found[0] if found else None
         return None
 
     def image_for_key(self, key):
@@ -244,9 +301,39 @@ class Basemaps:
         path = os.path.join(self.out_dir, safe)
         return path if os.path.exists(path) else None
 
+    def all_entries(self):
+        wmo = [e for m in sorted(self.map_dirs()) for e in self.wmo_entries(m)]
+        return self.floors + self.areas + wmo
+
+    def verify(self, map_id, points):
+        floors = [f for f in self.floors if f["map"] == map_id]
+        if floors:
+            inside = sum(1 for x, y in points if any(self.contains(f, x, y) for f in floors))
+            return "painted floors", inside
+        wmo = self.wmo_entries(map_id)
+        if not wmo:
+            return None, 0
+        info = self.ensure(wmo[0])
+        if not info:
+            return None, 0
+        from PIL import Image
+        with Image.open(os.path.join(self.out_dir, info["image"])) as img:
+            alpha = img.convert("RGBA").getchannel("A")
+            w, h = alpha.size
+            b = info["bounds"]
+            sx = w / (b["left"] - b["right"])
+            sy = h / (b["top"] - b["bottom"])
+            inside = 0
+            for x, y in points:
+                c, r = int((b["left"] - y) * sx), int((b["top"] - x) * sy)
+                if any(0 <= c + dc < w and 0 <= r + dr < h and alpha.getpixel((c + dc, r + dr))
+                       for dc in (-3, 0, 3) for dr in (-3, 0, 3)):
+                    inside += 1
+        return "indoor minimap", inside
+
     def build_all(self, progress=None):
         done = 0
-        for entry in self.floors + self.areas:
+        for entry in self.all_entries():
             info = self.ensure(entry)
             done += 1 if info else 0
             if progress:
