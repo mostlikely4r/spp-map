@@ -92,7 +92,14 @@ class App:
         threading.Thread(target=loop, daemon=True, name="ingest").start()
 
     def live_core(self):
-        best = max(self.cores.values(), key=lambda c: c.live.mtime(), default=None)
+        def score(ctx):
+            try:
+                ctx.live.poll()
+                bots = len(ctx.live.bots)
+            except Exception:
+                bots = 0
+            return (ctx.live.is_live() and bots > 0, bots > 0, ctx.live.mtime())
+        best = max(self.cores.values(), key=score, default=None)
         return best.core.name if best else None
 
     def live_snapshot(self, core, map_id):

@@ -62,7 +62,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self.authorized(query):
                 return self.send_text(401, "Unauthorized: open the access link with ?token=... once on this device.")
             if method == "GET" and PAGE_ROUTES.match(path):
-                return self.send_file(os.path.join(STATIC, "index.html"))
+                return self.send_index()
             if method == "GET" and path.startswith("/static/"):
                 name = os.path.basename(path)
                 return self.send_file(os.path.join(STATIC, name), cache=name.startswith("leaflet"))
@@ -197,6 +197,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "public, max-age=86400" if cache else "no-store")
         self.end_headers()
         self.wfile.write(data)
+
+    def send_index(self):
+        with open(os.path.join(STATIC, "index.html"), encoding="utf-8") as fh:
+            html = fh.read()
+
+        def stamp(m):
+            name = m.group(1)
+            try:
+                v = int(os.path.getmtime(os.path.join(STATIC, name)))
+            except OSError:
+                v = 0
+            return f'/static/{name}?v={v}"'
+        html = re.sub(r'/static/([\w.]+)"', stamp, html)
+        self.send_bytes(200, html.encode("utf-8"), "text/html; charset=utf-8")
 
     def send_file(self, path, cache=False):
         if not path or not os.path.isfile(path):
