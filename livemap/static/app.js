@@ -72,7 +72,7 @@ async function route() {
     if ((m = p.match(/^\/r\/(\d+)$/))) return await runPage(+m[1]);
     if ((m = p.match(/^\/t\/([^/]+)\/(.+)$/))) return await testPage(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
     if (p === '/w' || p === '/w/') return await worldPage(state.core || null, null);
-    if ((m = p.match(/^\/w\/([^/]+)(?:\/(\d+|atlas))?$/))) return await worldPage(decodeURIComponent(m[1]), m[2] === undefined ? null : m[2] === 'atlas' ? 'atlas' : +m[2]);
+    if ((m = p.match(/^\/w\/([^/]+)(?:\/(\d+|atlas|world))?$/))) return await worldPage(decodeURIComponent(m[1]), m[2] === undefined ? null : (m[2] === 'atlas' || m[2] === 'world') ? m[2] : +m[2]);
     if (p === '/clusters') return await clustersPage();
     if (p === '/settings') return await settingsPage();
     return await homePage();

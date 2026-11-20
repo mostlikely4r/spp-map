@@ -41,6 +41,11 @@ What works today:
   canvas at this boot's server offsets (the old QGIS layout), continents drawn from the client's
   terrain minimap so land does not overlap, instances from their indoor art, with every online bot.
   Placement is computed in the browser from the manifest offsets, so a restart never needs a rebuild.
+- **World + dungeons** (`/w/<core>/world`). Continents from the client's terrain minimap with every
+  dungeon, raid, battleground and arena drawn on top of its continent: either at its real entrance
+  (door from `AreaTrigger.dbc`, landing from `areatrigger_teleport`) or offshore next to it on open
+  sea, with door-to-landing lines. Battlegrounds sit between their faction entrances, arenas at their
+  real places. Placement does not depend on the boot, so a restart never moves anything.
 - **Phone first.** Mobile layout, short links (`/r/<run>`, `/t/<core>/<test>`), and an optional
   Cloudflare quick tunnel with token login, so you can use it away from the PC.
 - **Snapshots.** `livemap snapshot` renders a run page to a PNG (also at `/snapshot/run/<id>.png`).

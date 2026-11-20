@@ -28,7 +28,10 @@ const W = {
 
 const ATLAS_LAYERS = new Set(['bots', 'names', 'labels']);
 
-function atlasMode() { return W.map === 'atlas'; }
+function atlasMode() { return W.map === 'atlas' || W.map === 'world'; }
+function worldScene() { return W.map === 'world'; }
+const KIND_COLORS = { dungeon: '#48dbfb', raid: '#ff9f43', battleground: '#ff6b6b', arena: '#a29bfe', other: '#c8d6e5' };
+const PLACE_MODES = [['real', 'dungeons at their location'], ['sea', 'dungeons offshore']];
 
 function bpos(map, x, y) {
   if (!atlasMode()) return ll(x, y);
@@ -103,10 +106,17 @@ async function worldPage(core, mapId) {
   view.textContent = '';
   const first = await api('live' + (core ? '?core=' + encodeURIComponent(core) : ''));
   W.core = first.core;
-  if (mapId === null || mapId === undefined || (mapId !== 'atlas' && isNaN(mapId))) mapId = first.maps.length ? first.maps[0].id : 0;
+  if (mapId === null || mapId === undefined || (mapId !== 'atlas' && mapId !== 'world' && isNaN(mapId))) mapId = first.maps.length ? first.maps[0].id : 0;
   W.map = mapId;
   if (location.pathname !== `/w/${W.core}/${W.map}`) history.replaceState({}, '', `/w/${W.core}/${W.map}` + location.search);
-  if (atlasMode()) {
+  if (worldScene()) {
+    const qp = new URLSearchParams(location.search).get('place');
+    W.place = qp === 'sea' || qp === 'real' ? qp : (store('wplace') || 'real');
+    const ov = await api(`overlay?core=${W.core}&mode=${W.place}`);
+    W.atlas = ov.continents.map(c => ({ ...c, continent: true })).concat(ov.instances);
+    W.offsets = Object.fromEntries(W.atlas.map(m => [m.id, m.off]));
+    W.info = { id: 'world', name: 'World + dungeons', basemaps: [], zones: [], extent: null };
+  } else if (atlasMode()) {
     const atlas = await api(`atlas?core=${W.core}`);
     W.atlas = atlas.maps;
     W.offsets = Object.fromEntries(atlas.maps.map(m => [m.id, m.off]));
@@ -148,6 +158,11 @@ async function worldPage(core, mapId) {
   add(el('div', { class: 'wbar' }, el('div', { class: 'wrow' }, mapSelect, search), results,
       el('div', { class: 'wrow' }, colorSelect, filterSelect), chips, styleRow),
     el('div', { class: 'wmapwrap' }, mapDiv, sheet, status), legendBox);
+  if (worldScene()) {
+    const placeSelect = el('select', { class: 'wsel', onchange: e => { store('wplace', e.target.value); const u = new URL(location.href); u.searchParams.set('place', e.target.value); history.replaceState({}, '', u.pathname + u.search); worldPage(W.core, 'world'); } },
+      PLACE_MODES.map(([v, l]) => el('option', { value: v, selected: v === W.place ? 'selected' : null }, l)));
+    chips.before(el('div', { class: 'wrow' }, placeSelect));
+  }
   W.ui = { mapSelect, chips, status, legendBox, sheet, styleRow, npcSelect, pathSelect };
   styleVisibility();
 
@@ -199,14 +214,33 @@ function imgBounds(b) { return L.latLngBounds(ll(b.bottom, b.left), ll(b.top, b.
 
 function drawAtlas() {
   const all = [];
+  const scene = worldScene();
   for (const m of W.atlas) {
     const [ox, oy] = m.off;
     const e = m.extent;
     const b = { top: e.top + ox, bottom: e.bottom + ox, left: e.left + oy, right: e.right + oy };
     const box = imgBounds(b);
     all.push(box);
+    if (scene && !m.continent) {
+      const pad = Math.max(40, Math.abs(e.top - e.bottom) * 0.03);
+      const back = imgBounds({ top: b.top + pad, bottom: b.bottom - pad, left: b.left + pad, right: b.right - pad });
+      L.rectangle(back, { color: KIND_COLORS[m.kind] || KIND_COLORS.other, weight: 1.5, fillColor: '#0b0f14', fillOpacity: 0.72 })
+        .on('click', ev => { L.DomEvent.stop(ev); go(`/w/${W.core}/${m.id}`); }).addTo(W.layers.base);
+    }
     if (m.base) L.imageOverlay(`/basemap/${W.core}/${m.base.key}.webp`, box).addTo(W.layers.base);
     else L.rectangle(box, { color: '#576574', weight: 1, fill: false, interactive: false }).addTo(W.layers.base);
+  }
+  if (scene) {
+    for (const m of W.atlas) {
+      if (m.continent || !m.links) continue;
+      const c = KIND_COLORS[m.kind] || KIND_COLORS.other;
+      for (const [door, land] of m.links) {
+        if (m.moved || Math.hypot(door[0] - land[0], door[1] - land[1]) > 30)
+          L.polyline([ll(door[0], door[1]), ll(land[0], land[1])], { color: c, weight: 2, opacity: 0.85, dashArray: '6 6', interactive: false }).addTo(W.layers.base);
+        L.circleMarker(ll(door[0], door[1]), { radius: 4, color: '#000', weight: 1, fillColor: c, fillOpacity: 1, interactive: false }).addTo(W.layers.base);
+        L.circleMarker(ll(land[0], land[1]), { radius: 3, color: c, weight: 1, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(W.layers.base);
+      }
+    }
   }
   if (!W.fitted && all.length) { mapObj.fitBounds(all.reduce((a, b) => a.extend(b), L.latLngBounds(all[0].getSouthWest(), all[0].getNorthEast()))); W.fitted = true; }
   const v = new URLSearchParams(location.search);
@@ -319,7 +353,8 @@ function ingestSnapshot(snap) {
   if (!known.has(W.map) && !atlasMode()) known.set(W.map, { id: W.map, name: W.info.name, bots: 0, players: 0 });
   sel.textContent = '';
   const total = snap.maps.reduce((n, m) => n + m.bots, 0);
-  sel.append(el('option', { value: 'atlas', selected: atlasMode() ? 'selected' : null }, `All maps, atlas (${total})`));
+  sel.append(el('option', { value: 'world', selected: worldScene() ? 'selected' : null }, `World + dungeons (${total})`));
+  sel.append(el('option', { value: 'atlas', selected: W.map === 'atlas' ? 'selected' : null }, `All maps, atlas (${total})`));
   for (const m of [...known.values()].sort((a, b) => b.bots - a.bots))
     sel.append(el('option', { value: m.id, selected: m.id === W.map ? 'selected' : null }, `${m.name} (${m.bots}${m.players ? ', ' + m.players + ' players' : ''})`));
   redrawBots();

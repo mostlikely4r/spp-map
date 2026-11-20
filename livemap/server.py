@@ -9,6 +9,12 @@ from urllib.parse import parse_qs, quote, urlparse
 
 from . import botconf, snapshot
 
+
+class Server(ThreadingHTTPServer):
+    request_queue_size = 128
+    daemon_threads = True
+
+
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 PAGE_ROUTES = re.compile(r"^/($|r/\d+$|t/[^/]+/.+$|flips$|clusters$|test$|settings$|w$|w/.*$)")
 COOKIE = "lm_token"
@@ -136,7 +142,7 @@ class Handler(BaseHTTPRequestHandler):
             core = q.get("core") or app.live_core()
             if core not in app.cores:
                 return self.send_json({"error": "no core with live data"}, 404)
-            map_id = int(q["map"]) if q.get("map", "") not in ("", "atlas") else None
+            map_id = int(q["map"]) if q.get("map", "") not in ("", "atlas", "world") else None
             return self.send_json(app.live_snapshot(core, map_id))
         if method == "GET" and name == "live/bot":
             card = app.bot_card(q["core"], int(q["guid"]))
@@ -151,6 +157,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(app.live_intents(q["core"], int(q["map"]), min(int(q.get("seconds", 900)), 86400)))
         if method == "GET" and name == "atlas":
             return self.send_json(app.atlas(q["core"]))
+        if method == "GET" and name == "overlay":
+            return self.send_json(app.overlay(q["core"], q.get("mode", "real")))
         if method == "GET" and name == "mapinfo":
             return self.send_json(app.cores[q["core"]].map_info(int(q["map"])))
         if method == "GET" and name == "layer":
@@ -227,6 +235,6 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve(app):
     Handler.app = app
-    server = ThreadingHTTPServer((app.cfg.host, app.cfg.port), Handler)
+    server = Server((app.cfg.host, app.cfg.port), Handler)
     server.daemon_threads = True
     return server

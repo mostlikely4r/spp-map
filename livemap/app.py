@@ -7,6 +7,7 @@ import time
 from . import telemetry
 from .basemap import Basemaps
 from .catalog import Catalog
+from . import overlay
 from .layers import StaticLayers, file_sig, map_offsets
 from .live import LiveFeed, recent_events
 from .worlddb import WorldDb
@@ -73,6 +74,7 @@ class App:
         self.last_ingest = None
         self.listeners = []
         self.atlas_cache = {}
+        self.overlay_cache = {}
 
     def ingest(self):
         added = 0
@@ -148,6 +150,13 @@ class App:
         result = {"core": core, "maps": out}
         self.atlas_cache[core] = (sig, result)
         return result
+
+    def overlay(self, core, mode):
+        mode = "sea" if mode == "sea" else "real"
+        key = (core, mode)
+        if key not in self.overlay_cache:
+            self.overlay_cache[key] = overlay.build(self.cores[core], mode, pick_base)
+        return self.overlay_cache[key]
 
     def live_intents(self, core, map_id, seconds):
         ctx = self.cores[core]
