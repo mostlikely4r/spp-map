@@ -204,6 +204,12 @@ class Basemaps:
     def area_size(entry):
         return abs(entry["top"] - entry["bottom"]) * abs(entry["left"] - entry["right"])
 
+    def minimap_entry(self, map_id):
+        wmo = self.wmo_entries(map_id)
+        if wmo:
+            return wmo[0]
+        return self.terrain_entry(map_id)
+
     def choose(self, map_id, points):
         if not points:
             return None

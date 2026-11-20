@@ -126,7 +126,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"core": core, "test": test, "history": history,
                                    "triage": cat.triage(core, test), "quest": quest})
         if method == "GET" and name.startswith("run/"):
-            view = app.run_view(int(name.split("/", 1)[1]))
+            view = app.run_view(int(name.split("/", 1)[1]), q.get("art"))
             return self.send_json(view) if view else self.send_json({"error": "no such run"}, 404)
         if method == "GET" and name == "transitions":
             return self.send_json(cat.transitions(q.get("core"), q.get("kind", "flip"), int(q.get("limit", 100))))
@@ -142,7 +142,7 @@ class Handler(BaseHTTPRequestHandler):
             core = q.get("core") or app.live_core()
             if core not in app.cores:
                 return self.send_json({"error": "no core with live data"}, 404)
-            map_id = int(q["map"]) if q.get("map", "") not in ("", "atlas", "world") else None
+            map_id = int(q["map"]) if q.get("map", "") not in ("", "world") else None
             return self.send_json(app.live_snapshot(core, map_id))
         if method == "GET" and name == "live/bot":
             card = app.bot_card(q["core"], int(q["guid"]))
@@ -151,12 +151,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(app.cores[q["core"]].live.find(q.get("q", "")))
         if method == "GET" and name == "live/events":
             kinds = set(q["kinds"].split(",")) if q.get("kinds") else None
-            map_id = int(q["map"]) if q.get("map", "") != "" else None
+            map_id = int(q["map"]) if q.get("map", "") not in ("", "world") else None
             return self.send_json(app.live_events(q["core"], map_id, min(int(q.get("seconds", 1800)), 86400), kinds))
         if method == "GET" and name == "live/intents":
-            return self.send_json(app.live_intents(q["core"], int(q["map"]), min(int(q.get("seconds", 900)), 86400)))
-        if method == "GET" and name == "atlas":
-            return self.send_json(app.atlas(q["core"]))
+            seconds = min(int(q.get("seconds", 900)), 86400)
+            if q.get("map", "") == "world":
+                return self.send_json(app.scene_intents(q["core"], seconds))
+            return self.send_json(app.live_intents(q["core"], int(q["map"]), seconds))
         if method == "GET" and name == "overlay":
             return self.send_json(app.overlay(q["core"], q.get("mode", "real")))
         if method == "GET" and name == "mapinfo":
@@ -164,6 +165,13 @@ class Handler(BaseHTTPRequestHandler):
         if method == "GET" and name == "layer":
             ctx = app.cores[q["core"]]
             bounds = {k: float(q[k]) for k in ("left", "right", "top", "bottom")}
+            if q.get("map") == "world":
+                if q["kind"] == "zonelevels":
+                    return self.send_json(app.scene_zone_levels(q["core"]))
+                kinds = set(q.get("kinds", "").split(",")) - {""}
+                mode = "sea" if q.get("mode") == "sea" else "real"
+                honest = q.get("honest") == "1"
+                return self.send_json(app.scene_layer(q["core"], q["kind"], mode, honest, bounds, kinds))
             if q["kind"] == "nodes":
                 return self.send_json(ctx.world.travel_nodes(int(q["map"]), bounds))
             if q["kind"] == "zonelevels":

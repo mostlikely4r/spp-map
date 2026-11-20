@@ -169,7 +169,7 @@ def cmd_verify_world(app, args):
             if group is not None:
                 groups.setdefault(group, []).append(inst["id"])
             other = sea_by_id.get(inst["id"])
-            spill = bool(other) and land.hits(ov.box_of(e, other["off"][0], other["off"][1]))
+            spill = bool(other) and bool(inst["links"]) and land.hits(ov.box_of(e, other["off"][0], other["off"][1]))
             if spill:
                 on_land.append(inst["id"])
             extra = ""

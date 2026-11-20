@@ -8,11 +8,12 @@ from . import telemetry
 from .basemap import Basemaps
 from .catalog import Catalog
 from . import overlay
-from .layers import StaticLayers, file_sig, map_offsets
+from .layers import StaticLayers
 from .live import LiveFeed, recent_events
 from .worlddb import WorldDb
 
 MARGIN = 0.35
+SCENE_LIMIT = 600
 
 
 class CoreContext:
@@ -62,8 +63,9 @@ class CoreContext:
                 extent = self.world.map_extent(map_id)
             except Exception:
                 extent = None
+        terrain = bm.terrain_entry(map_id)
         return {"id": map_id, "name": bm.map_names().get(map_id, f"map {map_id}"), "basemaps": entries, "zones": zones,
-                "extent": extent}
+                "extent": extent, "terrain": bm.describe(terrain) if terrain else None}
 
 
 class App:
@@ -73,7 +75,6 @@ class App:
         self.cores = {name: CoreContext(core, cfg.data_dir) for name, core in cfg.cores.items()}
         self.last_ingest = None
         self.listeners = []
-        self.atlas_cache = {}
         self.overlay_cache = {}
 
     def ingest(self):
@@ -125,32 +126,6 @@ class App:
         card["runs"] = self.catalog.runs_by_host(core, card["name"])
         return card
 
-    def atlas(self, core):
-        ctx = self.cores[core]
-        sig = file_sig(os.path.join(ctx.core.logs, "livemap_manifest.json"))
-        cached = self.atlas_cache.get(core)
-        if cached and cached[0] == sig:
-            return cached[1]
-        out = []
-        for map_id, (ox, oy) in sorted(map_offsets(ctx.core.logs).items()):
-            info = ctx.map_info(map_id)
-            base = pick_base(info["basemaps"])
-            if base and base["kind"] == "zone" and not base["area"]:
-                terrain = ctx.basemaps.terrain_entry(map_id)
-                base = ctx.basemaps.describe(terrain) if terrain else base
-            extent = base["bounds"] if base else info["extent"]
-            if extent is None and ctx.world.available():
-                try:
-                    extent = ctx.world.map_extent(map_id)
-                except Exception:
-                    extent = None
-            if extent is None:
-                continue
-            out.append({"id": map_id, "name": info["name"], "off": [ox, oy], "base": base, "extent": extent})
-        result = {"core": core, "maps": out}
-        self.atlas_cache[core] = (sig, result)
-        return result
-
     def overlay(self, core, mode):
         mode = "sea" if mode == "sea" else "real"
         ctx = self.cores[core]
@@ -161,6 +136,53 @@ class App:
         result = overlay.build(ctx, mode, pick_base)
         self.overlay_cache[core] = ((mode, sig), result)
         return result
+
+    def scene_offsets(self, core, mode, honest):
+        ov = self.overlay(core, mode)
+        out = {}
+        for item in ov["continents"] + ov["instances"]:
+            if item.get("tray"):
+                continue
+            off = (item.get("off_honest") or item["off"]) if honest else item["off"]
+            out[item["id"]] = off
+        return out
+
+    def scene_layer(self, core, kind, mode, honest, bounds, kinds=None):
+        ctx = self.cores[core]
+        out = {"scene": True, "maps": [], "features": [], "bins": [], "links": [], "nodes": [], "total": 0, "binned": False}
+        for map_id, off in sorted(self.scene_offsets(core, mode, honest).items()):
+            b = {"top": bounds["top"] - off[0], "bottom": bounds["bottom"] - off[0],
+                 "left": bounds["left"] - off[1], "right": bounds["right"] - off[1]}
+            if b["bottom"] > b["top"] or b["right"] > b["left"]:
+                continue
+            if kind in ("creatures", "objects"):
+                data = ctx.world.spawn_layer(kind, map_id, b, limit=SCENE_LIMIT)
+            elif kind == "nodes":
+                data = ctx.world.travel_nodes(map_id, b)
+            else:
+                data = ctx.layers.telecache.layer(map_id, b, kinds, limit=SCENE_LIMIT)
+            out["maps"].append(map_id)
+            out["total"] += data.get("total", 0)
+            out["binned"] = out["binned"] or bool(data.get("binned"))
+            for key in ("features", "bins"):
+                for row in data.get(key) or ():
+                    out[key].append([map_id] + list(row))
+            for key in ("links", "nodes"):
+                for row in data.get(key) or ():
+                    out[key].append(dict(row, map=map_id))
+        return out
+
+    def scene_zone_levels(self, core):
+        return self.cores[core].layers.zones.for_map(None)
+
+    def scene_intents(self, core, seconds):
+        ctx = self.cores[core]
+        rows = ctx.layers.intents.recent(None, seconds)
+        names = ctx.basemaps.map_names()
+        for r in rows:
+            if r["to"] is None and r["to_map"] is not None:
+                r["to_name"] = names.get(r["to_map"], f"map {r['to_map']}")
+        return rows
 
     def live_intents(self, core, map_id, seconds):
         ctx = self.cores[core]
@@ -184,7 +206,7 @@ class App:
         except Exception as exc:
             return {"error": str(exc)}
 
-    def run_view(self, run_id):
+    def run_view(self, run_id, art=None):
         run = self.catalog.run(run_id)
         if not run:
             return None
@@ -226,7 +248,11 @@ class App:
         notice = []
         if map_id is not None and focus:
             wmo_ids = [tuple(p["wmo"]) for p in track if p.get("wmo") and p["wmo"][1] > 0]
-            entry = ctx.basemaps.floor_for(map_id, wmo_ids) if wmo_ids else None
+            entry = None
+            if art == "minimap":
+                entry = ctx.basemaps.minimap_entry(map_id)
+            else:
+                entry = ctx.basemaps.floor_for(map_id, wmo_ids) if wmo_ids else None
             if entry is None:
                 entry = ctx.basemaps.choose(map_id, focus)
             if entry:
@@ -253,6 +279,7 @@ class App:
             "exact": exact,
             "window": {"start": test_start or t0, "end": t1},
             "map": {"id": map_id, "source": map_source},
+            "art": art or "painted",
             "basemap": basemap,
             "track": world_track,
             "events": world_events,

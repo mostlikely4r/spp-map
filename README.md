@@ -37,27 +37,31 @@ What works today:
   the outdoor terrain minimap underneath (blank filler tiles dropped, clipped to where the map has
   spawns). `python -m livemap verify` checks every instance map: the share of world-database
   spawns that land on art.
-- **Atlas view** (`/w/<core>/atlas`, "All maps" in the map picker). Every continent and instance on one
-  canvas at this boot's server offsets (the old QGIS layout), continents drawn from the client's
-  terrain minimap so land does not overlap, instances from their indoor art, with every online bot.
-  Placement is computed in the browser from the manifest offsets, so a restart never needs a rebuild.
-- **World + dungeons** (`/w/<core>/world`). Continents from the client's terrain minimap with every
-  dungeon, raid, battleground and arena drawn on top of its continent: either at its real entrance
-  (door from `AreaTrigger.dbc`, landing from `areatrigger_teleport`) or offshore next to it on open
-  sea, with door-to-landing lines. Battlegrounds sit between their faction entrances, arenas at their
-  real places. Placement does not depend on the boot, so a restart never moves anything. Where
+- **World + dungeons** (`/w/<core>`, the default view). Continents from the client's terrain minimap
+  with every dungeon, raid, battleground and arena drawn on top of its continent: either at its real
+  entrance (door from `AreaTrigger.dbc`, landing from `areatrigger_teleport`) or offshore next to it on
+  open sea, with door-to-landing lines. Battlegrounds sit between their faction entrances, arenas at
+  their real places. Placement does not depend on the boot, so a restart never moves anything. Where
   several instances share one entrance they are fanned out with leader lines; **honest mode** stacks
-  them at their doors instead and puts a chip row on the cluster to pick which art is on top. A
-  **scale** row (1x / 1/2x / 1/4x) shrinks every instance around its door, which keeps the big raids
-  from covering a whole zone; bots and trails use the same scale. Zoomed out, each instance collapses
-  to a pin with the number of bots inside. Instances the game data cannot place (no entrance trigger)
-  go to a labelled "no entrance" row south of the continents.
+  them at their doors instead and puts a chip row on the cluster to pick which art is on top.
+  **Plain art** drops the dark backdrop and the coloured outline. Zoomed out, each instance collapses
+  to a pin with the number of bots inside. Every layer works here too, merged over the visible maps:
+  NPCs, game objects, travel nodes and their walking paths, travel intent, teleport cache, zone
+  levels, deaths / quests / level-ups. Instances the game data cannot place (no entrance trigger) are
+  anchored by hand (`livemap/overlay.py`, `ANCHORS`): Ebon Hold over the Scarlet Enclave, the old
+  Alliance PVP Barracks at Stormwind, both without door markers.
 
   `python -m livemap verify --scene world` reports, per instance, where the entrance came from
   (continent trigger / chained off another instance / hand anchor / override / tray), whether the
   inside landing point falls on the instance's own art, its cluster, and whether any placement in
   offshore mode still touches land. `data/overlay_anchors.toml` overrides anything the game data gets
-  wrong: `[<core>.<mapId>]` with optional `door = [map, x, y]`, `landing = [x, y]`, `scale`, `fan`.
+  wrong: `[<core>.<mapId>]` with optional `door = [map, x, y]`, `landing = [x, y]`, `fan`.
+
+- **Ground instead of the painted map.** In a single map (`/w/<core>/<mapId>`) and on a run page, a
+  chip switches the background between the painted world/dungeon map and the game's own terrain and
+  WMO minimap art. Outdoor terrain is 256 px per 533 yd (the same tile size the client uses), dungeon
+  art is 256 px per 128 yd, so instances read sharper than the ground they sit in.
+
 - **Phone first.** Mobile layout, short links (`/r/<run>`, `/t/<core>/<test>`), and an optional
   Cloudflare quick tunnel with token login, so you can use it away from the PC.
 - **Snapshots.** `livemap snapshot` renders a run page to a PNG (also at `/snapshot/run/<id>.png`).

@@ -166,6 +166,8 @@ class Zones:
 
     def for_map(self, map_id):
         self.load()
+        if map_id is None:
+            return [dict(z, map=m) for m, zs in self.by_map.items() for z in zs]
         return self.by_map.get(map_id, [])
 
 
@@ -213,7 +215,7 @@ class Intents:
         t0 = (datetime.strptime(newest, telemetry.TS_FMT) - timedelta(seconds=seconds)).strftime(telemetry.TS_FMT)
         latest = {}
         for r in self.rows:
-            if r["map"] == map_id and r["t"] >= t0:
+            if (map_id is None or r["map"] == map_id) and r["t"] >= t0:
                 latest[r["bot"]] = r
         return list(latest.values())
 

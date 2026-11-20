@@ -72,7 +72,7 @@ async function route() {
     if ((m = p.match(/^\/r\/(\d+)$/))) return await runPage(+m[1]);
     if ((m = p.match(/^\/t\/([^/]+)\/(.+)$/))) return await testPage(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
     if (p === '/w' || p === '/w/') return await worldPage(state.core || null, null);
-    if ((m = p.match(/^\/w\/([^/]+)(?:\/(\d+|atlas|world))?$/))) return await worldPage(decodeURIComponent(m[1]), m[2] === undefined ? null : (m[2] === 'atlas' || m[2] === 'world') ? m[2] : +m[2]);
+    if ((m = p.match(/^\/w\/([^/]+)(?:\/(\d+|world|atlas))?$/))) return await worldPage(decodeURIComponent(m[1]), m[2] === undefined || m[2] === 'atlas' ? null : (m[2] === 'world' ? 'world' : +m[2]));
     if (p === '/clusters') return await clustersPage();
     if (p === '/settings') return await settingsPage();
     return await homePage();
@@ -219,7 +219,8 @@ const LINK_COLORS = { 1: '#28c8ff', 2: '#ff9600', 3: '#c800ff', 4: '#ffff00', 5:
 const ll = (x, y) => [x, -y];
 
 async function runPage(id) {
-  const d = await api('run/' + id);
+  const art = store('wrunart') === 'minimap' ? 'minimap' : 'painted';
+  const d = await api('run/' + id + (art === 'minimap' ? '?art=minimap' : ''));
   const r = d.run;
   view.textContent = '';
   const mapDiv = el('div', { id: 'map' });
@@ -242,6 +243,11 @@ async function runPage(id) {
     el('h2', {}, `Timeline (${d.events.length} events, ${d.track.length} positions)`),
     el('div', { class: 'list timeline' }, timeline(d)));
   drawRunMap(mapDiv, toggles, d);
+  toggles.append(el('span', { class: 'chip' + (art === 'minimap' ? ' on' : ''), onclick: () => {
+    store('wrunart', art === 'minimap' ? 'painted' : 'minimap');
+    if (mapObj) { mapObj.remove(); mapObj = null; }
+    runPage(id);
+  } }, art === 'minimap' ? 'real ground' : 'ground instead of painted map'));
 }
 
 function recordBlock(r) {

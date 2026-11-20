@@ -280,6 +280,6 @@ def recent_events(logs, newest_ts, map_id, seconds=1800, name=None, kinds=None, 
             continue
         if kinds and kind not in kinds:
             continue
-        out.append({"t": f[0][:19], "bot": f[1], "event": f[2], "kind": kind, "level": level,
+        out.append({"t": f[0][:19], "bot": f[1], "event": f[2], "kind": kind, "level": level, "map": w[0],
                     "detail": ", ".join(x for x in f[7:9] if x)[:120], "x": w[1], "y": w[2]})
     return out[-limit:]

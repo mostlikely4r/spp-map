@@ -22,6 +22,8 @@ ANCHORS = {
     572: {"doors": [(0, 1902.0, 273.0)], "note": "Ruins of Lordaeron"},
     617: {"doors": [(571, 5810.0, 671.0)], "note": "Dalaran Sewers: Dalaran"},
     618: {"doors": [(1, 1806.0, -4382.0)], "note": "Ring of Valor: Orgrimmar (approximate)"},
+    609: {"doors": [(0, 2400.0, -4600.0)], "note": "Ebon Hold: over the Scarlet Enclave, Tyr's Hand", "bare": True},
+    449: {"doors": [(0, -8900.0, 520.0)], "note": "Alliance PVP Barracks: Stormwind, no entrance", "bare": True},
 }
 
 STEP = 250.0
@@ -237,8 +239,8 @@ def tray_row(pending, containers):
         x_edge = cx - h - TRAY_GAP
         out.append({"id": c["id"], "name": c["name"], "kind": c["kind"], "parent": None, "root": None,
                     "off": [off[0], off[1]], "off_honest": [off[0], off[1]], "door": [cx, y_centre],
-                    "pivot": [cx, y_centre], "base": c["base"], "extent": e, "moved": True, "links": [],
-                    "tray": True, "source": "tray", "scale": c["scale"], "fan": c["fan"]})
+                    "base": c["base"], "extent": e, "moved": True, "links": [],
+                    "tray": True, "source": "tray", "fan": c["fan"]})
     return out
 
 
@@ -259,7 +261,8 @@ def build(ctx, mode, pick_base, overrides=None):
     doors = doors_by_map(ctx.world, bm.dbc_path("AreaTrigger"))
     for map_id, anchor in ANCHORS.items():
         if map_id in kinds and map_id not in doors:
-            doors[map_id] = [{"id": 0, "map": m, "x": x, "y": y, "lx": None, "ly": None} for m, x, y in anchor["doors"]]
+            doors[map_id] = [{"id": 0, "map": m, "x": x, "y": y, "lx": None, "ly": None,
+                              "bare": bool(anchor.get("bare"))} for m, x, y in anchor["doors"]]
     apply_anchors(doors, overrides)
 
     continents = []
@@ -288,8 +291,7 @@ def build(ctx, mode, pick_base, overrides=None):
                 extent = None
         ov = overrides.get(map_id, {})
         entry = {"id": map_id, "name": info["name"], "kind": kinds.get(map_id, "other"), "doors": ds,
-                 "base": base, "extent": extent, "scale": float(ov.get("scale") or 1.0),
-                 "fan": ov.get("fan", True) is not False}
+                 "base": base, "extent": extent, "fan": ov.get("fan", True) is not False}
         if extent is None:
             unknown.append(entry)
             continue
@@ -307,7 +309,7 @@ def build(ctx, mode, pick_base, overrides=None):
         if extent is None:
             continue
         unknown.append({"id": map_id, "name": info["name"], "kind": kinds.get(map_id, "other"), "doors": [],
-                        "base": base, "extent": extent, "scale": 1.0, "fan": True})
+                        "base": base, "extent": extent, "fan": True})
 
     centre = {c["id"]: ((c["extent"]["top"] + c["extent"]["bottom"]) / 2 + c["off"][0],
                         (c["extent"]["left"] + c["extent"]["right"]) / 2 + c["off"][1]) for c in continents}
@@ -347,12 +349,13 @@ def build(ctx, mode, pick_base, overrides=None):
             honest = (off[0], off[1])
             landings = [(d["lx"] + off[0] + dx, d["ly"] + off[1] + dy) if d["lx"] is not None else
                         ((box["top"] + box["bottom"]) / 2, (box["left"] + box["right"]) / 2) for d in used]
+            bare = any(d.get("bare") for d in used)
             placed[c["id"]] = {"id": c["id"], "name": c["name"], "kind": c["kind"], "parent": parent, "root": root,
                                "off": [off[0] + dx, off[1] + dy], "off_honest": [honest[0], honest[1]],
-                               "pivot": [door[0] - honest[0], door[1] - honest[1]], "door": [door[0], door[1]],
+                               "door": [door[0], door[1]],
                                "base": c["base"], "extent": c["extent"], "moved": bool(dx or dy),
-                               "links": [[list(a), list(b)] for a, b in zip(door_pts, landings)],
-                               "tray": False, "source": source_of(used, parent), "scale": c["scale"], "fan": c["fan"]}
+                               "links": [] if bare else [[list(a), list(b)] for a, b in zip(door_pts, landings)],
+                               "tray": False, "source": source_of(used, parent), "fan": c["fan"]}
         if not rest or len(rest) == len(pending):
             pending = rest
             break
