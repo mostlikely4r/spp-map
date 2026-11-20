@@ -153,10 +153,14 @@ class App:
 
     def overlay(self, core, mode):
         mode = "sea" if mode == "sea" else "real"
-        key = (core, mode)
-        if key not in self.overlay_cache:
-            self.overlay_cache[key] = overlay.build(self.cores[core], mode, pick_base)
-        return self.overlay_cache[key]
+        ctx = self.cores[core]
+        sig = overlay.signature(ctx)
+        cached = self.overlay_cache.get(core)
+        if cached and cached[0] == (mode, sig):
+            return cached[1]
+        result = overlay.build(ctx, mode, pick_base)
+        self.overlay_cache[core] = ((mode, sig), result)
+        return result
 
     def live_intents(self, core, map_id, seconds):
         ctx = self.cores[core]

@@ -45,7 +45,19 @@ What works today:
   dungeon, raid, battleground and arena drawn on top of its continent: either at its real entrance
   (door from `AreaTrigger.dbc`, landing from `areatrigger_teleport`) or offshore next to it on open
   sea, with door-to-landing lines. Battlegrounds sit between their faction entrances, arenas at their
-  real places. Placement does not depend on the boot, so a restart never moves anything.
+  real places. Placement does not depend on the boot, so a restart never moves anything. Where
+  several instances share one entrance they are fanned out with leader lines; **honest mode** stacks
+  them at their doors instead and puts a chip row on the cluster to pick which art is on top. A
+  **scale** row (1x / 1/2x / 1/4x) shrinks every instance around its door, which keeps the big raids
+  from covering a whole zone; bots and trails use the same scale. Zoomed out, each instance collapses
+  to a pin with the number of bots inside. Instances the game data cannot place (no entrance trigger)
+  go to a labelled "no entrance" row south of the continents.
+
+  `python -m livemap verify --scene world` reports, per instance, where the entrance came from
+  (continent trigger / chained off another instance / hand anchor / override / tray), whether the
+  inside landing point falls on the instance's own art, its cluster, and whether any placement in
+  offshore mode still touches land. `data/overlay_anchors.toml` overrides anything the game data gets
+  wrong: `[<core>.<mapId>]` with optional `door = [map, x, y]`, `landing = [x, y]`, `scale`, `fan`.
 - **Phone first.** Mobile layout, short links (`/r/<run>`, `/t/<core>/<test>`), and an optional
   Cloudflare quick tunnel with token login, so you can use it away from the PC.
 - **Snapshots.** `livemap snapshot` renders a run page to a PNG (also at `/snapshot/run/<id>.png`).

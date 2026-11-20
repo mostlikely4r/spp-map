@@ -108,6 +108,8 @@ def cmd_basemaps(cfg, args):
 
 def cmd_verify(cfg, args):
     app = App(cfg)
+    if args.scene == "world":
+        return cmd_verify_world(app, args)
     threshold = args.threshold
     for name in args.core or list(cfg.cores):
         ctx = app.cores[name]
@@ -139,6 +141,55 @@ def cmd_verify(cfg, args):
             print(f"{name}:   no art  {m}")
 
 
+def cmd_verify_world(app, args):
+    from . import overlay as ov
+
+    for name in args.core or list(app.cores):
+        ctx = app.cores[name]
+        if not ctx.basemaps.archives.available():
+            print(f"{name}: needs client data, skipped")
+            continue
+        overrides = set(ov.load_anchors(ctx))
+        real = app.overlay(name, "real")
+        sea = app.overlay(name, "sea")
+        land = ov.land_mask(ctx)
+        sea_by_id = {i["id"]: i for i in sea["instances"]}
+        outside, on_land, groups, placed = [], [], {}, 0
+        for inst in real["instances"]:
+            if inst.get("tray"):
+                continue
+            placed += 1
+            e = inst["extent"]
+            box = ov.box_of(e, inst["off"][0], inst["off"][1])
+            bad = [p for p in inst["links"]
+                   if not (box["bottom"] - 1 <= p[1][0] <= box["top"] + 1 and box["right"] - 1 <= p[1][1] <= box["left"] + 1)]
+            if bad:
+                outside.append(inst["id"])
+            group = inst.get("cluster")
+            if group is not None:
+                groups.setdefault(group, []).append(inst["id"])
+            other = sea_by_id.get(inst["id"])
+            spill = bool(other) and land.hits(ov.box_of(e, other["off"][0], other["off"][1]))
+            if spill:
+                on_land.append(inst["id"])
+            extra = ""
+            if spill:
+                extra += " on-land"
+            if inst["id"] in overrides:
+                extra += " override"
+            print(f"{name}: {'LOW ' if bad else 'ok  '}{inst['id']:5} {inst['source']:9} "
+                  f"door {inst['parent'] if inst['parent'] is not None else inst['root']:>4} "
+                  f"links {len(inst['links'])} cluster {group if group is not None else '-':>4}{extra} {inst['name']}", flush=True)
+        print(f"{name}: {placed} placed, {len(real['tray'])} in the tray, {len(outside)} landing outside art, "
+              f"{len(on_land)} box on land in offshore mode, {len(groups)} clusters", flush=True)
+        if real["tray"]:
+            print(f"{name}:   tray  {', '.join(str(t) for t in real['tray'])}")
+        if outside:
+            print(f"{name}:   outside art  {', '.join(str(t) for t in outside)}")
+        for group, members in sorted(groups.items()):
+            print(f"{name}:   cluster {group}  {', '.join(str(m) for m in members)}")
+
+
 def main():
     parser = argparse.ArgumentParser(prog="livemap")
     parser.add_argument("--config", default=DEFAULT_CONFIG)
@@ -154,6 +205,8 @@ def main():
     p.add_argument("--core", action="append")
     p.add_argument("--map", type=int)
     p.add_argument("--threshold", type=float, default=0.95)
+    p.add_argument("--scene", choices=["art", "world"], default="art",
+                   help="art: world-DB spawns land on each map's art; world: the World + dungeons placement")
     p = sub.add_parser("basemaps", help="prebuild painted basemaps from the client")
     p.add_argument("--core", action="append")
     args = parser.parse_args()

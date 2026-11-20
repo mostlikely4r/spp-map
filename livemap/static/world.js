@@ -23,6 +23,7 @@ const MAX_LEVEL = { vanilla: 60, tbc: 70, wotlk: 80 };
 const W = {
   core: null, map: null, timer: null, slowTimer: null, markers: new Map(), selected: null, follow: false, info: null,
   snap: null, npcColor: store('wnpccolor') || 'role', pathColor: store('wpathcolor') || 'type', color: store('wcolor') || 'faction', filter: store('wfilter') || 'all', layers: null, trail: null, fitted: false,
+  place: null, ov: null, inst: [], scale: 1, honest: false, top: {}, counts: {},
   on: { ...DEFAULT_LAYERS, ...(JSON.parse(store('wlayers') || 'null') || {}) },
 };
 
@@ -32,11 +33,49 @@ function atlasMode() { return W.map === 'atlas' || W.map === 'world'; }
 function worldScene() { return W.map === 'world'; }
 const KIND_COLORS = { dungeon: '#48dbfb', raid: '#ff9f43', battleground: '#ff6b6b', arena: '#a29bfe', other: '#c8d6e5' };
 const PLACE_MODES = [['real', 'dungeons at their location'], ['sea', 'dungeons offshore']];
+const SCALES = [[1, '1\u00d7'], [0.5, '\u00bd\u00d7'], [0.25, '\u00bc\u00d7']];
+const LOD_PX = 40;
+
+function mapPoint(p, x, y) {
+  if (!p) return [x, y];
+  const s = p.s || 1;
+  if (s === 1 || !p.pivot) return [x + p.off[0], y + p.off[1]];
+  return [p.pivot[0] + p.off[0] + s * (x - p.pivot[0]), p.pivot[1] + p.off[1] + s * (y - p.pivot[1])];
+}
+
+function placeOf(map) {
+  return (W.place && W.place[map]) || null;
+}
 
 function bpos(map, x, y) {
   if (!atlasMode()) return ll(x, y);
-  const off = W.offsets[map];
-  return off ? ll(x + off[0], y + off[1]) : null;
+  const p = placeOf(map);
+  if (!p) return null;
+  const [a, b] = mapPoint(p, x, y);
+  return ll(a, b);
+}
+
+function mapBox(m) {
+  const p = placeOf(m.id);
+  const e = m.extent;
+  const [top, left] = mapPoint(p, e.top, e.left);
+  const [bottom, right] = mapPoint(p, e.bottom, e.right);
+  return { top, bottom, left, right };
+}
+
+function applyPlace() {
+  const place = {};
+  const ov = W.ov;
+  if (ov) {
+    for (const c of ov.continents) place[c.id] = { off: c.off, pivot: null, s: 1, continent: true };
+    for (const i of ov.instances) {
+      const honest = W.honest || i.fan === false;
+      place[i.id] = { off: honest ? (i.off_honest || i.off) : i.off, pivot: i.pivot, s: (W.scale || 1) * (i.scale || 1), continent: false, inst: i };
+    }
+  } else if (W.atlas) {
+    for (const m of W.atlas) place[m.id] = { off: m.off, pivot: null, s: 1, continent: !!(m.continent || W.map === 'atlas') };
+  }
+  W.place = place;
 }
 
 function wSaveLayers() { store('wlayers', JSON.stringify(W.on)); }
@@ -45,7 +84,7 @@ function stopWorld() {
   clearInterval(W.timer); clearInterval(W.slowTimer);
   W.timer = W.slowTimer = null;
   W.markers.clear(); W.selected = null; W.trail = null; W.layers = null; W.fitted = false; W.viewApplied = false;
-  W.zoneLabels = null; W.zoneLevels = null;
+  W.zoneLabels = null; W.zoneLevels = null; W.place = null; W.ov = null; W.inst = []; W.top = {}; W.counts = {};
   document.body.classList.remove('worldmode');
 }
 
@@ -110,16 +149,20 @@ async function worldPage(core, mapId) {
   W.map = mapId;
   if (location.pathname !== `/w/${W.core}/${W.map}`) history.replaceState({}, '', `/w/${W.core}/${W.map}` + location.search);
   if (worldScene()) {
-    const qp = new URLSearchParams(location.search).get('place');
-    W.place = qp === 'sea' || qp === 'real' ? qp : (store('wplace') || 'real');
-    const ov = await api(`overlay?core=${W.core}&mode=${W.place}`);
-    W.atlas = ov.continents.map(c => ({ ...c, continent: true })).concat(ov.instances);
-    W.offsets = Object.fromEntries(W.atlas.map(m => [m.id, m.off]));
+    const q = new URLSearchParams(location.search);
+    const mode = q.get('place');
+    W.placeMode = mode === 'sea' || mode === 'real' ? mode : (store('wplace') || 'real');
+    W.scale = readScale(q.has('scale') ? q.get('scale') : store('wscale'));
+    W.honest = q.has('honest') ? q.get('honest') === '1' : store('whonest') === '1';
+    W.ov = await api(`overlay?core=${W.core}&mode=${W.placeMode}`);
+    W.atlas = W.ov.continents.map(c => ({ ...c, continent: true })).concat(W.ov.instances);
+    applyPlace();
     W.info = { id: 'world', name: 'World + dungeons', basemaps: [], zones: [], extent: null };
   } else if (atlasMode()) {
     const atlas = await api(`atlas?core=${W.core}`);
     W.atlas = atlas.maps;
-    W.offsets = Object.fromEntries(atlas.maps.map(m => [m.id, m.off]));
+    W.ov = null;
+    applyPlace();
     W.info = { id: 'atlas', name: 'All maps (atlas)', basemaps: [], zones: [], extent: null };
   } else W.info = await api(`mapinfo?core=${W.core}&map=${W.map}`);
 
@@ -159,9 +202,15 @@ async function worldPage(core, mapId) {
       el('div', { class: 'wrow' }, colorSelect, filterSelect), chips, styleRow),
     el('div', { class: 'wmapwrap' }, mapDiv, sheet, status), legendBox);
   if (worldScene()) {
-    const placeSelect = el('select', { class: 'wsel', onchange: e => { store('wplace', e.target.value); const u = new URL(location.href); u.searchParams.set('place', e.target.value); history.replaceState({}, '', u.pathname + u.search); worldPage(W.core, 'world'); } },
-      PLACE_MODES.map(([v, l]) => el('option', { value: v, selected: v === W.place ? 'selected' : null }, l)));
-    chips.before(el('div', { class: 'wrow' }, placeSelect));
+    const placeSelect = el('select', { class: 'wsel', onchange: e => {
+      store('wplace', e.target.value);
+      const u = new URL(location.href); u.searchParams.set('place', e.target.value); history.replaceState({}, '', u.pathname + u.search);
+      worldPage(W.core, 'world');
+    } }, PLACE_MODES.map(([v, l]) => el('option', { value: v, selected: v === W.placeMode ? 'selected' : null }, l)));
+    W.scaleChips = SCALES.map(([v, l]) => el('span', { class: 'chip' + (W.scale === v ? ' on' : ''), 'data-scale': v,
+      onclick: () => setScene({ scale: v }) }, 'scale ' + l));
+    W.honestChip = el('span', { class: 'chip' + (W.honest ? ' on' : ''), onclick: () => setScene({ honest: !W.honest }) }, 'honest (stack at doors)');
+    chips.before(el('div', { class: 'wrow' }, placeSelect), el('div', { class: 'chips wlayers' }, ...W.scaleChips, W.honestChip));
   }
   W.ui = { mapSelect, chips, status, legendBox, sheet, styleRow, npcSelect, pathSelect };
   styleVisibility();
@@ -181,7 +230,8 @@ async function worldPage(core, mapId) {
     chips.append(chip);
   }
   for (const key of Object.keys(W.on)) applyLayer(key);
-  mapObj.on('moveend', debounce(() => { refreshViewportLayers(); updateZones(); updateNames(); updateZoneLevelLabels(); saveView(); }, 400));
+  mapObj.on('moveend', debounce(() => { refreshViewportLayers(); updateZones(); updateNames(); updateZoneLevelLabels(); updateLod(); updateClusterChips(); saveView(); }, 400));
+  mapObj.on('zoomend', debounce(() => { updateLod(); updateClusterChips(); }, 150));
   mapObj.on('click', () => closeSheet());
   ingestSnapshot(await api(`live?core=${W.core}&map=${W.map}`));
   const want = new URLSearchParams(location.search).get('bot');
@@ -197,6 +247,26 @@ function saveView() {
   const u = new URL(location.href);
   u.searchParams.set('x', Math.round(c.lat)); u.searchParams.set('y', Math.round(-c.lng)); u.searchParams.set('z', mapObj.getZoom());
   history.replaceState({}, '', u.pathname + u.search);
+}
+
+function readScale(v) {
+  const n = Number(v);
+  return SCALES.some(([s]) => s === n) ? n : 1;
+}
+
+function setScene(patch) {
+  Object.assign(W, patch);
+  if ('scale' in patch) store('wscale', String(W.scale));
+  if ('honest' in patch) store('whonest', W.honest ? '1' : '0');
+  const u = new URL(location.href);
+  u.searchParams.set('scale', String(W.scale));
+  u.searchParams.set('honest', W.honest ? '1' : '0');
+  history.replaceState({}, '', u.pathname + u.search);
+  if (W.scaleChips) for (const chip of W.scaleChips) chip.classList.toggle('on', Number(chip.dataset.scale) === W.scale);
+  if (W.honestChip) W.honestChip.classList.toggle('on', W.honest);
+  applyPlace();
+  drawBase();
+  redrawBots();
 }
 
 function debounce(fn, ms) { let t = null; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
@@ -215,20 +285,31 @@ function imgBounds(b) { return L.latLngBounds(ll(b.bottom, b.left), ll(b.top, b.
 function drawAtlas() {
   const all = [];
   const scene = worldScene();
-  for (const m of W.atlas) {
-    const [ox, oy] = m.off;
-    const e = m.extent;
-    const b = { top: e.top + ox, bottom: e.bottom + ox, left: e.left + oy, right: e.right + oy };
+  W.inst = [];
+  const order = scene ? drawOrder() : W.atlas;
+  for (const m of order) {
+    const b = mapBox(m);
     const box = imgBounds(b);
-    all.push(box);
-    if (scene && !m.continent) {
-      const pad = Math.max(40, Math.abs(e.top - e.bottom) * 0.03);
-      const back = imgBounds({ top: b.top + pad, bottom: b.bottom - pad, left: b.left + pad, right: b.right - pad });
-      L.rectangle(back, { color: KIND_COLORS[m.kind] || KIND_COLORS.other, weight: 1.5, fillColor: '#0b0f14', fillOpacity: 0.72 })
-        .on('click', ev => { L.DomEvent.stop(ev); go(`/w/${W.core}/${m.id}`); }).addTo(W.layers.base);
+    if (!m.tray) all.push(box);
+    if (!scene) {
+      if (m.base) L.imageOverlay(`/basemap/${W.core}/${m.base.key}.webp`, box).addTo(W.layers.base);
+      else L.rectangle(box, { color: '#576574', weight: 1, fill: false, interactive: false }).addTo(W.layers.base);
+      continue;
     }
-    if (m.base) L.imageOverlay(`/basemap/${W.core}/${m.base.key}.webp`, box).addTo(W.layers.base);
-    else L.rectangle(box, { color: '#576574', weight: 1, fill: false, interactive: false }).addTo(W.layers.base);
+    if (m.continent || !m.extent) {
+      if (m.base) L.imageOverlay(`/basemap/${W.core}/${m.base.key}.webp`, box).addTo(W.layers.base);
+      continue;
+    }
+    const inst = { m, b, box, pin: null };
+    const s = (W.place[m.id] || {}).s || 1;
+    const pad = Math.max(40 * s, Math.abs(b.top - b.bottom) * 0.03);
+    const color = KIND_COLORS[m.kind] || KIND_COLORS.other;
+    const back = imgBounds({ top: b.top + pad, bottom: b.bottom - pad, left: b.left + pad, right: b.right - pad });
+    inst.back = L.rectangle(back, { color, weight: 1.5, dashArray: m.tray ? '6 4' : null, fillColor: '#0b0f14', fillOpacity: 0.72 })
+      .on('click', ev => { L.DomEvent.stop(ev); go(`/w/${W.core}/${m.id}`); }).addTo(W.layers.base);
+    if (m.base) inst.img = L.imageOverlay(`/basemap/${W.core}/${m.base.key}.webp`, box).addTo(W.layers.base);
+    else inst.plain = L.rectangle(box, { color: '#576574', weight: 1, fill: false, interactive: false }).addTo(W.layers.base);
+    W.inst.push(inst);
   }
   if (scene) {
     for (const m of W.atlas) {
@@ -246,6 +327,106 @@ function drawAtlas() {
   const v = new URLSearchParams(location.search);
   if (!W.viewApplied && v.has('z')) { mapObj.setView(ll(+v.get('x'), +v.get('y')), +v.get('z')); W.fitted = true; }
   W.viewApplied = true;
+  updateLod();
+  updateClusterChips();
+}
+
+function drawOrder() {
+  const members = new Map();
+  for (const m of W.atlas) if (m.cluster) {
+    if (!members.has(m.cluster)) members.set(m.cluster, []);
+    members.get(m.cluster).push(m);
+  }
+  const moved = new Set();
+  const rank = new Map();
+  for (const [, group] of members) {
+    const chosen = W.top[group[0].cluster] && group.find(m => m.id === W.top[group[0].cluster]);
+    const sorted = group.slice().sort((a, b) => area(a.extent) - area(b.extent));
+    const push = chosen && sorted.splice(sorted.indexOf(chosen), 1);
+    for (const m of sorted) { moved.add(m); rank.set(m.id, 0); }
+    if (push) { moved.add(chosen); rank.set(chosen.id, 1); }
+  }
+  const first = W.atlas.filter(m => !moved.has(m));
+  const grouped = W.atlas.filter(m => moved.has(m)).sort((a, b) => rank.get(a.id) - rank.get(b.id));
+  return first.concat(grouped);
+}
+
+function artWidth(inst) {
+  const px = Math.pow(2, mapObj.getZoom());
+  return Math.abs(inst.box.getEast() - inst.box.getWest()) * px;
+}
+
+function updateLod() {
+  if (!worldScene() || !mapObj) return;
+  const counts = W.counts || {};
+  for (const inst of W.inst) {
+    const small = artWidth(inst) < LOD_PX;
+    for (const layer of [inst.img, inst.plain]) {
+      if (!layer) continue;
+      const on = mapObj.hasLayer(layer);
+      if (small === on) { if (small) mapObj.removeLayer(layer); else mapObj.addLayer(layer); }
+    }
+    if (inst.back) {
+      if (small && mapObj.hasLayer(inst.back)) mapObj.removeLayer(inst.back);
+      if (!small && !mapObj.hasLayer(inst.back)) mapObj.addLayer(inst.back);
+    }
+    const n = counts[inst.m.id] || 0;
+    if (small) {
+      const at = ll((inst.b.top + inst.b.bottom) / 2, (inst.b.left + inst.b.right) / 2);
+      const html = pinHtml(inst.m, n);
+      if (!inst.pin) {
+        inst.pin = L.marker(at, { icon: L.divIcon({ className: 'wpinwrap', html, iconSize: [0, 0] }), keyboard: false })
+          .bindTooltip(`${inst.m.name}${n ? ' \u00b7 ' + n + ' inside' : ''}`)
+          .on('click', () => go(`/w/${W.core}/${inst.m.id}`)).addTo(W.layers.base);
+      } else {
+        inst.pin.setLatLng(at);
+        inst.pin.setIcon(L.divIcon({ className: 'wpinwrap', html, iconSize: [0, 0] }));
+      }
+    } else if (inst.pin) {
+      W.layers.base.removeLayer(inst.pin);
+      inst.pin = null;
+    }
+  }
+}
+
+function pinHtml(m, n) {
+  const color = KIND_COLORS[m.kind] || KIND_COLORS.other;
+  return `<span class="wpin${n ? '' : ' empty'}" style="border-color:${color}" title="${escapeHtml(m.name)}">${n || ''}</span>`;
+}
+
+function updateClusterChips() {
+  if (!W.layers) return;
+  if (!W.layers.chips) W.layers.chips = L.layerGroup().addTo(mapObj);
+  W.layers.chips.clearLayers();
+  if (!worldScene() || !W.honest) return;
+  const groups = new Map();
+  for (const m of W.atlas) if (m.cluster) {
+    if (!groups.has(m.cluster)) groups.set(m.cluster, []);
+    groups.get(m.cluster).push(m);
+  }
+  const view = mapObj.getBounds();
+  const px = Math.pow(2, mapObj.getZoom());
+  for (const [group, members] of groups) {
+    const boxes = members.map(m => mapBox(m));
+    const top = Math.max(...boxes.map(b => b.top)), bottom = Math.min(...boxes.map(b => b.bottom));
+    const left = Math.max(...boxes.map(b => b.left)), right = Math.min(...boxes.map(b => b.right));
+    if (Math.abs(left - right) * px < LOD_PX) continue;
+    const at = ll((top + bottom) / 2, (left + right) / 2);
+    if (!view.contains(at)) continue;
+    const row = el('div', { class: 'wcluster' }, ...members.slice().sort((a, b) => area(b.extent) - area(a.extent))
+      .map(m => el('span', { class: 'chip' + (W.top[group] === m.id ? ' on' : ''), onclick: ev => {
+        L.DomEvent.stop(ev);
+        W.top[group] = m.id;
+        drawBase();
+      } }, shortName(m.name))));
+    L.marker(at, { icon: L.divIcon({ className: 'wclusterwrap', html: row, iconSize: null }), keyboard: false })
+      .addTo(W.layers.chips);
+  }
+}
+
+function shortName(name) {
+  const n = name.replace(/^The\s+/i, '');
+  return n.length > 22 ? n.slice(0, 21) + '\u2026' : n;
 }
 
 function drawBase() {
@@ -283,12 +464,15 @@ function updateAtlasLabels() {
   const view = mapObj.getBounds();
   const px = Math.pow(2, mapObj.getZoom());
   for (const m of W.atlas) {
-    const [ox, oy] = m.off;
-    const e = m.extent;
-    const w = Math.abs(e.left - e.right);
-    const at = ll(e.top + ox - Math.abs(e.top - e.bottom) * 0.04, (e.left + e.right) / 2 + oy);
+    const p = placeOf(m.id);
+    if (!p) continue;
+    const b = mapBox(m);
+    const w = Math.abs(b.left - b.right);
+    const [ax, ay] = mapPoint(p, m.extent.top, (m.extent.left + m.extent.right) / 2);
+    const at = ll(ax - Math.abs(b.top - b.bottom) * 0.04, ay);
     if (w * px < 110 || !view.contains(at)) continue;
-    L.marker(at, { icon: L.divIcon({ className: 'zlabel', html: '<span>' + escapeHtml(m.name) + '</span>', iconSize: null }), interactive: false }).addTo(W.layers.labels);
+    const name = escapeHtml(m.name) + (m.tray ? ' (no entrance)' : '');
+    L.marker(at, { icon: L.divIcon({ className: 'zlabel', html: '<span>' + name + '</span>', iconSize: null }), interactive: false }).addTo(W.layers.labels);
   }
 }
 
@@ -348,6 +532,8 @@ function ingestSnapshot(snap) {
   snap.colIndex = Object.fromEntries(snap.cols.map((c, i) => [c, i]));
   snap.playerGuids = new Set(snap.bots.filter(r => !r[snap.colIndex.bot]).map(r => r[snap.colIndex.guid]));
   W.snap = snap;
+  W.counts = {};
+  for (const r of snap.bots) W.counts[r[snap.colIndex.map]] = (W.counts[r[snap.colIndex.map]] || 0) + 1;
   const sel = W.ui.mapSelect;
   const known = new Map(snap.maps.map(m => [m.id, m]));
   if (!known.has(W.map) && !atlasMode()) known.set(W.map, { id: W.map, name: W.info.name, bots: 0, players: 0 });
@@ -358,8 +544,10 @@ function ingestSnapshot(snap) {
   for (const m of [...known.values()].sort((a, b) => b.bots - a.bots))
     sel.append(el('option', { value: m.id, selected: m.id === W.map ? 'selected' : null }, `${m.name} (${m.bots}${m.players ? ', ' + m.players + ' players' : ''})`));
   redrawBots();
+  if (worldScene()) updateLod();
+  const lost = worldScene() && W.notPlaced ? ' / not placed: ' + W.notPlaced : '';
   const age = snap.live ? 'live' : 'not live (server stopped or positions log off)';
-  W.ui.status.textContent = `${snap.core} · ${age} · ${snap.bots.length} here · ${snap.newest ? snap.newest.slice(11) : 'no data yet'}`;
+  W.ui.status.textContent = `${snap.core} · ${age} · ${snap.bots.length} here · ${snap.newest ? snap.newest.slice(11) : 'no data yet'}${lost}`;
   if (W.selected) refreshSelected();
 }
 
@@ -367,6 +555,7 @@ function redrawBots() {
   if (!W.snap) return;
   const seen = new Set();
   const multiFloor = !atlasMode() && pickBase().floors.length > 1;
+  W.notPlaced = 0;
   for (const r of W.snap.bots) {
     const guid = col(r, 'guid');
     if (!passesFilter(r)) continue;
@@ -377,7 +566,7 @@ function redrawBots() {
       fillOpacity: offFloor ? 0.25 : 0.95, opacity: offFloor ? 0.3 : 1, renderer: W.renderer };
     let m = W.markers.get(guid);
     const pos = bpos(col(r, 'map'), col(r, 'x'), col(r, 'y'));
-    if (!pos) { seen.delete(guid); continue; }
+    if (!pos) { seen.delete(guid); W.notPlaced += 1; continue; }
     if (!m) {
       m = L.circleMarker(pos, style);
       m.on('click', e => { L.DomEvent.stopPropagation(e); selectBot(guid, false); });
@@ -566,10 +755,32 @@ async function refreshSelected(center) {
   if (card.map !== W.map && !atlasMode()) { go(`/w/${W.core}/${card.map}?bot=${guid}`); return; }
   W.layers.sel.clearLayers();
   const here = bpos(card.map, card.x, card.y);
-  if (card.trail.length > 1 && here) L.polyline(card.trail.map(p => bpos(card.map, p[0], p[1])), { color: '#28c8ff', weight: 3, opacity: 0.85 }).addTo(W.layers.sel);
+  drawTrail(card);
   if (here) L.circleMarker(here, { radius: 11, color: '#28c8ff', weight: 3, fill: false }).addTo(W.layers.sel);
   if (here && (center || W.follow)) mapObj.setView(here, Math.max(mapObj.getZoom(), center ? (atlasMode() ? -3 : -1) : mapObj.getZoom()));
   renderCard(card);
+}
+
+function drawTrail(card) {
+  if (!card.trail || card.trail.length < 2) return;
+  const pts = [];
+  for (const p of card.trail) {
+    const map = p.length > 3 ? p[3] : card.map;
+    if (!atlasMode() && map !== card.map) continue;
+    const pos = bpos(map, p[0], p[1]);
+    if (pos) pts.push({ pos, map });
+  }
+  const solid = pts => L.polyline(pts, { color: '#28c8ff', weight: 3, opacity: 0.85 }).addTo(W.layers.sel);
+  let run = [];
+  for (let i = 0; i < pts.length; i++) {
+    if (i && pts[i].map !== pts[i - 1].map) {
+      if (atlasMode()) L.polyline([pts[i - 1].pos, pts[i].pos], { color: '#28c8ff', weight: 2, opacity: 0.6, dashArray: '3 5' }).addTo(W.layers.sel);
+      if (run.length > 1) solid(run.map(p => p.pos));
+      run = [];
+    }
+    run.push(pts[i]);
+  }
+  if (run.length > 1) solid(run.map(p => p.pos));
 }
 
 function money(c) { return `${Math.floor(c / 10000)}g ${Math.floor(c / 100) % 100}s ${c % 100}c`; }

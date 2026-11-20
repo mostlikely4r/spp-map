@@ -233,7 +233,7 @@ class LiveFeed:
                     "state": telemetry.flags_text(row["flags"])})
         leader = self.bots.get(row["leader"]) if row["leader"] else None
         out["leader_name"] = leader["name"] if leader else ("" if not row["leader"] else str(row["leader"]))
-        out["trail"] = [[t[2], t[3], t[4]] for t in trail if t[1] == row["map"]]
+        out["trail"] = [[t[2], t[3], t[4], t[1]] for t in trail]
         return out
 
     def find(self, text, limit=20):
