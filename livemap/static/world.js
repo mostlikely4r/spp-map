@@ -19,6 +19,13 @@ const EVENT_STYLE = { death: ['#e6463c', 'died'], levelup: ['#ffd200', 'level up
 const COLOR_MODES = [['faction', 'faction'], ['class', 'class'], ['level', 'level'], ['state', 'state'], ['hp', 'health']];
 const FILTERS = [['all', 'everyone'], ['players', 'players + their bots'], ['combat', 'in combat'], ['dead', 'dead'], ['group', 'grouped'], ['test', 'running a test'], ['idle', 'inactive']];
 const MAX_LEVEL = { vanilla: 60, tbc: 70, wotlk: 80 };
+const ADT_YD = 533.33333333, ADT_PX = 1024;
+const LM_CRS = Object.assign({}, L.CRS.Simple, {
+  scale: z => (ADT_PX / ADT_YD) * Math.pow(2, z - 1),
+  zoom: s => Math.log2(s / (ADT_PX / ADT_YD)) + 1,
+  infinite: true,
+});
+const TERRAIN_SHADES = ['soft', 'medium', 'strong', 'flat'];
 
 const W = {
   core: null, map: null, timer: null, slowTimer: null, markers: new Map(), selected: null, follow: false, info: null,
@@ -178,9 +185,11 @@ async function worldPage(core, mapId) {
   const legendBox = el('div', { class: 'legend wlegend' });
   const mapDiv = el('div', { id: 'wmap' });
   const sheet = el('div', { class: 'sheet hidden' });
+  const terrainTag = el('div', { class: 'wterrain hidden' });
+  const terrainRow = el('div', { class: 'chips wterrainrow' });
   add(el('div', { class: 'wbar' }, el('div', { class: 'wrow' }, mapSelect, search), results,
       el('div', { class: 'wrow' }, colorSelect, filterSelect), chips, styleRow),
-    el('div', { class: 'wmapwrap' }, mapDiv, sheet, status), legendBox);
+    el('div', { class: 'wmapwrap' }, mapDiv, sheet, status, terrainTag), legendBox);
   if (worldScene()) {
     const placeSelect = el('select', { class: 'wsel', onchange: e => {
       store('wplace', e.target.value);
@@ -191,16 +200,23 @@ async function worldPage(core, mapId) {
     W.plainChip = el('span', { class: 'chip' + (W.plain ? ' on' : ''), onclick: () => setScene({ plain: !W.plain }) }, 'plain art (no borders)');
     chips.before(el('div', { class: 'wrow' }, placeSelect), el('div', { class: 'chips wlayers' }, W.honestChip, W.plainChip));
   }
-  W.ui = { mapSelect, chips, status, legendBox, sheet, styleRow, npcSelect, pathSelect };
+  W.ui = { mapSelect, chips, status, legendBox, sheet, styleRow, npcSelect, pathSelect, terrainTag, terrainRow };
+  chips.after(terrainRow);
   styleVisibility();
 
-  mapObj = L.map(mapDiv, { crs: L.CRS.Simple, minZoom: -7, maxZoom: 4, zoomSnap: 0.25, attributionControl: false, preferCanvas: true });
+  mapObj = L.map(mapDiv, { crs: LM_CRS, minZoom: -7, maxZoom: 4, zoomSnap: 0.25, attributionControl: false, preferCanvas: true });
+  mapObj.createPane('baseimg');
+  mapObj.getPane('baseimg').style.zIndex = 340;
+  mapObj.createPane('terrain');
+  mapObj.getPane('terrain').style.zIndex = 350;
   W.layers = {
     base: L.layerGroup().addTo(mapObj), zones: L.layerGroup(), labels: L.layerGroup(), bots: L.layerGroup(),
     npcs: L.layerGroup(), objects: L.layerGroup(), nodes: L.layerGroup(), events: L.layerGroup(), tele: L.layerGroup(), intents: L.layerGroup(), zonelv: L.layerGroup(), sel: L.layerGroup().addTo(mapObj),
   };
   W.renderer = L.canvas({ padding: 0.3 });
   drawBase();
+  W.terrain = mountTerrain(mapObj, W.core, W.map, terrainInfo(),
+    () => (W.base && W.base.bounds ? imgBounds(W.base.bounds) : null), { chips: terrainRow, tag: terrainTag });
   for (const [key, label] of [['bots', 'bots'], ['names', 'names'], ['zones', 'zone maps'], ['labels', worldScene() ? 'map names' : 'zone names'], ['zonelv', 'zone levels'], ['events', 'deaths / quests / levels'],
     ['intents', 'travel intent'], ['npcs', 'NPCs'], ['objects', 'objects'], ['nodes', 'travel nodes'], ['tele', 'teleport cache']]) {
     if (key === 'zones' && worldScene()) continue;
@@ -210,7 +226,7 @@ async function worldPage(core, mapId) {
   }
   for (const key of Object.keys(W.on)) applyLayer(key);
   mapObj.on('moveend', debounce(() => { refreshViewportLayers(); updateZones(); updateNames(); updateZoneLevelLabels(); updateLod(); updateClusterChips(); saveView(); }, 400));
-  mapObj.on('zoomend', debounce(() => { updateLod(); updateClusterChips(); }, 150));
+  mapObj.on('zoomend', debounce(() => { updateLod(); updateClusterChips(); if (W.terrain) W.terrain.sync(); }, 150));
   mapObj.on('click', () => closeSheet());
   ingestSnapshot(await api(`live?core=${W.core}&map=${W.map}`));
   const want = new URLSearchParams(location.search).get('bot');
@@ -218,6 +234,119 @@ async function worldPage(core, mapId) {
   W.timer = setInterval(() => { if (document.visibilityState === 'visible') poll(); }, 3000);
   W.slowTimer = setInterval(() => { if (document.visibilityState === 'visible') { if (W.on.events) loadEvents(); if (W.on.intents) loadIntents(); } }, 30000);
   legend();
+}
+
+
+function terrainInfo() {
+  return (W.info && W.info.terrain_render) || { available: false };
+}
+
+function terrainPrefs(info) {
+  const spec = info || terrainInfo();
+  let shade = store('wshade');
+  if (!TERRAIN_SHADES.includes(shade)) shade = TERRAIN_SHADES.includes(spec.shade) ? spec.shade : 'soft';
+  const detailed = store('wdetail');
+  return { shade, detailed: detailed === null || detailed === undefined ? true : detailed === '1' };
+}
+
+function terrainUrl(core, mapId, info, shade) {
+  return `/tiles/${core}/adt/${mapId}/{z}/{x}/{y}.webp?v=${info.version}&shade=${shade}`;
+}
+
+function terrainLayerFor(info, core, mapId, shade, bounds, map) {
+  const layer = L.tileLayer(terrainUrl(core, mapId, info, shade), {
+    tileSize: 256, minNativeZoom: info.min_zoom, maxNativeZoom: info.max_zoom,
+    minZoom: map.getMinZoom() - 1, maxZoom: map.getMaxZoom(),
+    noWrap: true, keepBuffer: 2, pane: 'terrain', updateWhenIdle: false,
+    bounds: bounds || undefined,
+  });
+  layer.lmShade = shade;
+  return layer;
+}
+
+function fillTerrainChips(row, info, sync) {
+  if (!row) return;
+  row.textContent = '';
+  if (typeof worldScene === 'function' && worldScene()) {
+    const scenePrefs = terrainPrefs(info);
+    for (const name of TERRAIN_SHADES) {
+      const node = el('span', { class: 'chip' + (scenePrefs.shade === name ? ' on' : ''), title: 'ground shading for the maps you open' }, name);
+      node.onclick = () => { store('wshade', name); fillTerrainChips(row, info, sync); };
+      row.append(node);
+    }
+    return;
+  }
+  if (!info || !info.available) return;
+  const prefs = terrainPrefs(info);
+  const chip = (label, on, run, hint) => {
+    const node = el('span', { class: 'chip' + (on ? ' on' : ''), title: hint || null }, label);
+    node.onclick = () => { run(); fillTerrainChips(row, info, sync); sync(); };
+    return node;
+  };
+  row.append(chip('detailed ground', prefs.detailed, () => store('wdetail', prefs.detailed ? '0' : '1'),
+    'draw the ground from the client terrain files instead of the minimap'));
+  for (const name of TERRAIN_SHADES)
+    row.append(chip(name, prefs.shade === name, () => store('wshade', name), 'ground shading preset'));
+}
+
+function mountTerrain(map, core, mapId, info, boundsOf, ui) {
+  if (!map.getPane('terrain')) {
+    map.createPane('terrain');
+    map.getPane('terrain').style.zIndex = 350;
+  }
+  const state = { layer: null, info, bounds: null };
+  let polled = 0;
+  const poll = () => {
+    if (state.info && (state.info.available || !state.info.pending) || polled++ > 6) return;
+    setTimeout(async () => {
+      try {
+        const fresh = await api(`terrain?core=${encodeURIComponent(core)}&map=${mapId}`);
+        if (fresh && !fresh.pending) {
+          state.info = fresh;
+          fillTerrainChips(ui.chips, fresh, sync);
+          sync();
+          return;
+        }
+      } catch (e) { return; }
+      poll();
+    }, 1500);
+  };
+  const sync = () => {
+    if (!state.info || !state.info.available || mapId === null || mapId === undefined) {
+      if (state.layer && map.hasLayer(state.layer)) map.removeLayer(state.layer);
+      if (ui.tag) { ui.tag.textContent = ''; ui.tag.classList.add('hidden'); }
+      return;
+    }
+    const info = state.info;
+    const prefs = terrainPrefs(info);
+    const bounds = boundsOf ? boundsOf() : null;
+    if (state.layer && bounds && state.bounds && !state.bounds.equals(bounds)) {
+      map.removeLayer(state.layer);
+      state.layer = null;
+    }
+    if (state.layer && state.layer.lmShade !== prefs.shade) {
+      state.layer.setUrl(terrainUrl(core, mapId, info, prefs.shade));
+      state.layer.lmShade = prefs.shade;
+      state.layer.redraw();
+    }
+    const want = prefs.detailed && map.getZoom() >= info.min_zoom;
+    if (want && !state.layer) {
+      state.bounds = bounds;
+      state.layer = terrainLayerFor(info, core, mapId, prefs.shade, bounds, map).addTo(map);
+    } else if (want && !map.hasLayer(state.layer)) map.addLayer(state.layer);
+    else if (!want && state.layer && map.hasLayer(state.layer)) map.removeLayer(state.layer);
+    if (ui.tag) {
+      const on = state.layer && map.hasLayer(state.layer);
+      const text = on && info.fallback ? `terrain: rendered from the ${info.source} client` : '';
+      ui.tag.textContent = text;
+      ui.tag.classList.toggle('hidden', !text);
+    }
+  };
+  map.on('zoomend', sync);
+  fillTerrainChips(ui.chips, info, sync);
+  sync();
+  poll();
+  return { sync, fill: () => fillTerrainChips(ui.chips, state.info, sync), state };
 }
 
 function saveView() {
@@ -268,7 +397,7 @@ function drawScene() {
     const box = imgBounds(b);
     if (!m.tray) all.push(box);
     if (m.continent || !m.extent) {
-      if (m.base) L.imageOverlay(`/basemap/${W.core}/${m.base.key}.webp`, box).addTo(W.layers.base);
+      if (m.base) L.imageOverlay(`/basemap/${W.core}/${m.base.key}.webp`, box, { pane: 'baseimg' }).addTo(W.layers.base);
       continue;
     }
     const inst = { m, b, box, pin: null };
@@ -279,7 +408,7 @@ function drawScene() {
       inst.back = L.rectangle(back, { color, weight: 1.5, dashArray: m.tray ? '6 4' : null, fillColor: '#0b0f14', fillOpacity: 0.72 }).addTo(W.layers.base);
     }
     const open = ev => { L.DomEvent.stop(ev); go(`/w/${W.core}/${m.id}`); };
-    if (m.base) inst.img = L.imageOverlay(`/basemap/${W.core}/${m.base.key}.webp`, box).on('click', open).addTo(W.layers.base);
+    if (m.base) inst.img = L.imageOverlay(`/basemap/${W.core}/${m.base.key}.webp`, box, { pane: 'baseimg' }).on('click', open).addTo(W.layers.base);
     else inst.plain = L.rectangle(box, { color: '#576574', weight: 1, fill: false, interactive: true }).on('click', open).addTo(W.layers.base);
     W.inst.push(inst);
   }
@@ -322,7 +451,7 @@ function drawOrder() {
 }
 
 function artWidth(inst) {
-  const px = Math.pow(2, mapObj.getZoom());
+  const px = LM_CRS.scale(mapObj.getZoom());
   return Math.abs(inst.box.getEast() - inst.box.getWest()) * px;
 }
 
@@ -375,7 +504,7 @@ function updateClusterChips() {
     groups.get(m.cluster).push(m);
   }
   const view = mapObj.getBounds();
-  const px = Math.pow(2, mapObj.getZoom());
+  const px = LM_CRS.scale(mapObj.getZoom());
   for (const [group, members] of groups) {
     const boxes = members.map(m => mapBox(m));
     const top = Math.max(...boxes.map(b => b.top)), bottom = Math.min(...boxes.map(b => b.bottom));
@@ -412,7 +541,7 @@ function drawBase() {
   if (!base) base = wmo || terrain;
   W.base = base;
   if (base) {
-    L.imageOverlay(`/basemap/${W.core}/${base.key}.webp`, imgBounds(base.bounds)).addTo(W.layers.base);
+    L.imageOverlay(`/basemap/${W.core}/${base.key}.webp`, imgBounds(base.bounds), { pane: 'baseimg' }).addTo(W.layers.base);
     if (!W.fitted) { mapObj.fitBounds(imgBounds(base.bounds)); W.fitted = true; }
   } else if (!W.fitted && W.info.extent) { mapObj.fitBounds(imgBounds(W.info.extent)); W.fitted = true; }
   else if (!W.fitted) mapObj.setView([0, 0], -3);
@@ -429,6 +558,7 @@ function drawBase() {
     row.append(el('span', { class: 'chip' + (W.art === 'minimap' ? ' on' : ''), onclick: () => setArt(W.art === 'minimap' ? 'painted' : 'minimap') },
       W.art === 'minimap' ? 'real ground' : 'ground instead of painted map'));
   if (row.children.length) W.ui.chips.after(row);
+  if (W.terrain) W.terrain.sync();
 }
 
 function setArt(art) {
@@ -447,7 +577,7 @@ function updateMapLabels() {
   W.layers.labels.clearLayers();
   if (!W.on.labels) return;
   const view = mapObj.getBounds();
-  const px = Math.pow(2, mapObj.getZoom());
+  const px = LM_CRS.scale(mapObj.getZoom());
   for (const m of W.atlas) {
     const p = placeOf(m.id);
     if (!p) continue;
@@ -470,11 +600,11 @@ function updateZones() {
   const view = mapObj.getBounds();
   const zoom = mapObj.getZoom();
   const cw = Math.abs(continent.bounds.left - continent.bounds.right);
-  const pxPerYard = Math.pow(2, zoom);
+  const pxPerYard = LM_CRS.scale(zoom);
   if (W.on.zones && pxPerYard * cw > 3600) {
     for (const z of zones.slice().sort((a, b) => area(b.bounds) - area(a.bounds))) {
       const zb = imgBounds(z.bounds);
-      if (view.intersects(zb)) L.imageOverlay(`/basemap/${W.core}/${z.key}.webp`, zb, { opacity: 1 }).addTo(W.layers.zones);
+      if (view.intersects(zb)) L.imageOverlay(`/basemap/${W.core}/${z.key}.webp`, zb, { opacity: 1, pane: 'baseimg' }).addTo(W.layers.zones);
     }
   }
   if (W.on.labels) {

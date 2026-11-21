@@ -1,15 +1,18 @@
 import collections
 import os
+from dataclasses import replace
 from datetime import datetime, timedelta
 import threading
 import time
 
 from . import telemetry
+from .adtrender import Terrain
 from .basemap import Basemaps
 from .catalog import Catalog
 from . import overlay
 from .layers import StaticLayers
 from .live import LiveFeed, recent_events
+from .mapstore import MapStore
 from .worlddb import WorldDb
 
 MARGIN = 0.35
@@ -17,7 +20,8 @@ SCENE_LIMIT = 600
 
 
 class CoreContext:
-    def __init__(self, core, data_dir):
+    def __init__(self, app, core, data_dir):
+        self.app = app
         self.core = core
         self.data_dir = data_dir
         self._basemaps = None
@@ -34,7 +38,9 @@ class CoreContext:
     @property
     def basemaps(self):
         if self._basemaps is None:
-            self._basemaps = Basemaps(self.core, self.data_dir)
+            client = self.app.client_dir(self.core.name)
+            core = self.core if client == self.core.client else replace(self.core, client=client)
+            self._basemaps = Basemaps(core, self.data_dir)
             if self.world.available():
                 self._basemaps.extent_hint = self.safe_extent
         return self._basemaps
@@ -65,17 +71,29 @@ class CoreContext:
                 extent = None
         terrain = bm.terrain_entry(map_id)
         return {"id": map_id, "name": bm.map_names().get(map_id, f"map {map_id}"), "basemaps": entries, "zones": zones,
-                "extent": extent, "terrain": bm.describe(terrain) if terrain else None}
+                "extent": extent, "terrain": bm.describe(terrain) if terrain else None,
+                "terrain_render": self.app.terrain.describe(self.core.name, map_id)}
 
 
 class App:
     def __init__(self, cfg):
         self.cfg = cfg
         self.catalog = Catalog(os.path.join(cfg.data_dir, "livemap.sqlite"))
-        self.cores = {name: CoreContext(core, cfg.data_dir) for name, core in cfg.cores.items()}
+        self.mapstore = MapStore(os.path.join(cfg.data_dir, "livemap.sqlite"), cfg.map)
+        self.terrain = Terrain(self)
+        self.cores = {name: CoreContext(self, core, cfg.data_dir) for name, core in cfg.cores.items()}
         self.last_ingest = None
         self.listeners = []
         self.overlay_cache = {}
+
+    def client_dir(self, name):
+        core = self.cfg.cores.get(name)
+        return self.mapstore.client_dir(name) or (core.client if core else "")
+
+    def reset_client(self, name):
+        ctx = self.cores.get(name)
+        if ctx is not None:
+            ctx._basemaps = None
 
     def ingest(self):
         added = 0
@@ -275,6 +293,7 @@ class App:
             notice.append("no painted map for this area yet; showing positions on a plain grid")
         return {
             "run": run,
+            "terrain_render": self.terrain.describe(run["core"], map_id) if map_id is not None else None,
             "record": record,
             "exact": exact,
             "window": {"start": test_start or t0, "end": t1},

@@ -6,6 +6,14 @@ port = 8420
 data_dir = "data"
 require_token_local = false
 
+[map]
+keep_cache = false
+cache_mb = 500
+shading = "soft"
+render_workers = 2
+fallback = true
+fallback_order = ["tbc", "vanilla"]
+
 [[core]]
 name = "vanilla"
 client = "C:/Games/WoW-Classic/Data"

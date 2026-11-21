@@ -82,6 +82,8 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     file = ctx.basemaps.path(name)
                 return self.send_file(file, cache=True) if file else self.send_text(404, "no basemap")
+            if method == "GET" and path.startswith("/tiles/"):
+                return self.tiles(path)
             if method == "GET" and path.startswith("/snapshot/run/"):
                 run_id = int(re.sub(r"\D", "", path.rsplit("/", 1)[1]))
                 view = self.app.run_view(run_id)
@@ -160,6 +162,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(app.live_intents(q["core"], int(q["map"]), seconds))
         if method == "GET" and name == "overlay":
             return self.send_json(app.overlay(q["core"], q.get("mode", "real")))
+        if method == "GET" and name == "terrain":
+            return self.send_json(app.terrain.describe(q["core"], int(q["map"])))
         if method == "GET" and name == "mapinfo":
             return self.send_json(app.cores[q["core"]].map_info(int(q["map"])))
         if method == "GET" and name == "layer":
@@ -191,16 +195,55 @@ class Handler(BaseHTTPRequestHandler):
                 "remote": self.is_remote(),
                 "can_write": not self.is_remote() or app.cfg.allow_remote_write,
                 "cores": {n: botconf.read_values(c.core.bot_conf) for n, c in app.cores.items()},
+                "map": app.terrain.settings_payload(),
             })
         if method == "POST" and name == "settings":
+            b = self.body()
+            if b.get("section") == "map":
+                key = str(b.get("key") or "")
+                if key.startswith("client.") and self.is_remote() and not app.cfg.allow_remote_write:
+                    return self.send_json({"error": "client folders are filesystem paths; set allow_remote_write in livemap.toml to change them remotely"}, 403)
+                try:
+                    app.terrain.set_value(key, b.get("value"))
+                except ValueError as exc:
+                    return self.send_json({"error": str(exc)}, 400)
+                return self.send_json({"ok": True, "map": app.terrain.settings_payload()})
             if self.is_remote() and not app.cfg.allow_remote_write:
                 return self.send_json({"error": "changing server settings from a remote session is off (allow_remote_write in livemap.toml)"}, 403)
-            b = self.body()
             botconf.write_value(app.cores[b["core"]].core.bot_conf, b["key"], b["value"])
             return self.send_json({"ok": True, "values": botconf.read_values(app.cores[b["core"]].core.bot_conf)})
+        if method == "POST" and name == "mapcache":
+            b = self.body()
+            core = b.get("core") or None
+            if core and core not in app.cores:
+                return self.send_json({"error": "unknown core"}, 400)
+            freed = app.terrain.clear_cache(core)
+            return self.send_json({"ok": True, "freed_mb": round(freed / 1048576, 1), "map": app.terrain.settings_payload()})
+        if method == "POST" and name == "clientcheck":
+            b = self.body()
+            return self.send_json(app.terrain.check_client(b.get("core"), b.get("path")))
         if method == "POST" and name == "ingest":
             return self.send_json({"added": app.ingest()})
         return self.send_json({"error": f"unknown endpoint {name}"}, 404)
+
+    def tiles(self, path):
+        parts = path.split("/")
+        if len(parts) != 8 or parts[3] != "adt":
+            return self.send_text(404, "bad tile path")
+        core, map_id, z, x = parts[2], parts[4], parts[5], parts[6]
+        y = parts[7].split(".", 1)[0]
+        try:
+            data = self.app.terrain.tile(core, int(map_id), int(z), int(x), int(y),
+                                         parse_qs(urlparse(self.path).query).get("shade", [None])[0])
+        except (TypeError, ValueError):
+            return self.send_text(404, "bad tile path")
+        if not data:
+            self.send_response(204)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self.send_bytes(200, data, "image/webp", cache=604800)
 
     def send_json(self, payload, status=200):
         self.send_bytes(status, json.dumps(payload, default=str).encode("utf-8"), "application/json")
@@ -212,7 +255,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "public, max-age=86400" if cache else "no-store")
+        seconds = cache if isinstance(cache, int) and not isinstance(cache, bool) else 86400
+        self.send_header("Cache-Control", f"public, max-age={seconds}" if cache else "no-store")
         self.end_headers()
         self.wfile.write(data)
 

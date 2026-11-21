@@ -62,6 +62,15 @@ What works today:
   WMO minimap art. Outdoor terrain is 256 px per 533 yd (the same tile size the client uses), dungeon
   art is 256 px per 128 yd, so instances read sharper than the ground they sit in.
 
+- **Rendered ground, zoomed in.** Close up, the background is drawn from the client's terrain files
+  instead of the minimap art: one ADT per request, splatted ground textures, hillshade relief from the
+  height field and real liquid layers, at half a yard per pixel (four times sharper than the minimap).
+  It switches on by zoom (minimap below ~2 yd/px, rendered ground at and above), has a shading switch
+  (soft / medium / strong / flat) and a "detailed ground" on/off chip in the map's layer row, and a
+  Settings section for the cache, the shading default, worker count and client folders. Buildings are
+  missing until phase R2; terrain holes are transparent so the minimap shows through. See
+  [Ground (terrain) layer](#ground-terrain-layer).
+
 - **Phone first.** Mobile layout, short links (`/r/<run>`, `/t/<core>/<test>`), and an optional
   Cloudflare quick tunnel with token login, so you can use it away from the PC.
 - **Snapshots.** `livemap snapshot` renders a run page to a PNG (also at `/snapshot/run/<id>.png`).
@@ -102,6 +111,38 @@ Open the tunnel link once on your phone; it stores a cookie and drops the token 
 Anyone without the token gets 401. A quick tunnel gets a new address every start; the token stays
 the same (`data/access_token.txt`; delete it to issue a new one).
 
+## Ground (terrain) layer
+
+`livemap/adtrender.py` renders the ground on demand, per 533 yd ADT tile, from the client's
+`World\Maps\<map>\<map>_<x>_<y>.adt` (vanilla and TBC formats; WotLK needs the R3 work).
+
+- **Tile endpoint:** `GET /tiles/<core>/adt/<map>/<z>/<x>/<y>.webp?shade=<soft|medium|strong|flat>`.
+  The grid follows the viewer's CRS exactly: at `z=1` one ADT is 4x4 tiles of 256 px (0.52 yd/px),
+  `z=0` is 2x2, `z=-1` is one ADT per tile (2.08 yd/px, the minimap resolution). Above `z=1` the
+  browser scales the native tiles up; below `z=-1` the viewer uses the minimap image instead. Tiles
+  for ocean or missing ADTs return `204`.
+- **Caches:** parsed ADTs (120 MB), decoded textures (24 MB) and rendered ADT images (112 MB) live in
+  RAM as LRUs shared by every client; each render also warms its eight neighbour ADTs in the
+  background so the next pan is instant. With "keep a copy on disk" on, rendered ADTs go to
+  `data/adtcache/<core>/<source core>/<map>/v<renderer>/<x>/<y>_<shade>.webp`, capped and evicted
+  oldest-first. The cache key carries the renderer version, so a bump never serves stale tiles and the
+  browser may cache tiles for a week.
+- **Workers:** `ProcessPoolExecutor` is replaced by a `ThreadPoolExecutor` (setting `render_workers`,
+  default 2): the render is numpy/Pillow work that releases the GIL, and threads let every worker share
+  the RAM caches and the MPQ archives instead of paying the ~5 s archive open per process. Duplicate
+  requests for the same `(client, map, ADT, shade)` share one future.
+- **Fallback (per map):** when the viewed core has no client, or its client has no terrain for that
+  map, another core's client renders it (order in Settings, default `tbc, vanilla`). The map shows
+  "terrain: rendered from the <core> client" and the disk cache keeps those tiles apart. A core whose
+  client DBC has map 571 (Northrend) is treated as WotLK and is not used for terrain until R3.
+- **Settings** (`/settings`, section "Map", stored in `data/livemap.sqlite`): keep cache on/off, cache
+  size cap with current usage, delete the saved cache (all cores or one), default shading, render
+  workers, fallback on/off and order, and the client `Data` folder per core with a check button
+  (reports the archive count, locale and whether a sample ADT can be read). Client folders are a
+  filesystem path, so they are editable locally only unless `allow_remote_write = true`.
+- **Cost:** first tile after start ~5 s (MPQ tables are parsed by `mpyq`), then ~0.25 s per new ADT on
+  a warm zone and instant for cached ones; server RSS stays under ~350 MB with the RAM caches full.
+
 ## What the data needs
 
 | Feature | Needs |
@@ -114,6 +155,7 @@ the same (`data/access_token.txt`; delete it to issue a new one).
 | History across restarts | `AiPlayerbot.LogArchiveOnBoot = 1` (old logs are renamed `<name>_<YYYYmmdd_HHMMSS>.csv` instead of wiped; `LogArchiveKeepBoots` limits how many). Toggle it on the Settings page |
 | Instance positions (old builds) | `map_offsets.csv`, `livemap_manifest.json` in `AiPlayerbot.AllowedLogFiles` |
 | Painted maps | the game client's `Data` folder |
+| Rendered ground | the same client `Data` folder (vanilla or TBC client; WotLK from R3) |
 
 The map art comes from your own client and is built locally; this repository does not ship
 Blizzard art.
@@ -129,6 +171,8 @@ livemap/
   telemetry.py  time-sliced reads of the big CSV logs, display -> world coordinates
   basemap.py    painted zone / dungeon floor maps from the client
   wmomap.py     indoor (WMO) + terrain minimap art for instance maps
+  adtrender.py  zoomed-in ground rendered from the client's ADT terrain files
+  mapstore.py   map settings (cache, shading, workers, client folders) in livemap.sqlite
   clientdata.py MPQ + DBC + BLP reading
   worlddb.py    quest givers / objectives / turn-ins, travel nodes, NPC / object layers
   live.py       tails bot_positions.csv for the live map, bot cards, recent events

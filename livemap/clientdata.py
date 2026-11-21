@@ -66,23 +66,38 @@ def read_entry(arc, name):
 
 
 class ClientArchives:
-    def __init__(self, data_dir, locale="enUS"):
+    def __init__(self, data_dir, locale="enUS", skip=None):
         self.data_dir = data_dir
+        self.locale = locale
         self.paths = archive_order(data_dir, locale) if data_dir and os.path.isdir(data_dir) else []
+        if skip is not None:
+            self.paths = [p for p in self.paths if not skip.search(os.path.basename(p))]
         self.opened = {}
         self.lock = threading.Lock()
+        self.open_lock = threading.Lock()
 
     def available(self):
         return bool(self.paths)
 
     def archive(self, path):
-        if path not in self.opened:
-            try:
-                import mpyq
-                self.opened[path] = mpyq.MPQArchive(path, listfile=False)
-            except Exception:
-                self.opened[path] = None
-        return self.opened[path]
+        if path in self.opened:
+            return self.opened[path]
+        with self.open_lock:
+            if path not in self.opened:
+                try:
+                    import mpyq
+                    self.opened[path] = mpyq.MPQArchive(path, listfile=False)
+                except Exception:
+                    self.opened[path] = None
+            return self.opened[path]
+
+    def preload(self, threads=4):
+        from concurrent.futures import ThreadPoolExecutor
+        pending = [p for p in self.paths if p not in self.opened]
+        if not pending:
+            return
+        with ThreadPoolExecutor(max_workers=max(1, min(threads, len(pending)))) as pool:
+            list(pool.map(self.archive, pending))
 
     def read(self, name):
         with self.lock:

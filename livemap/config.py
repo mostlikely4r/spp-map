@@ -34,6 +34,7 @@ class Config:
     token: str
     require_token_local: bool
     allow_remote_write: bool
+    map: dict = field(default_factory=dict)
     cores: dict[str, Core] = field(default_factory=dict)
 
     def core(self, name):
@@ -88,6 +89,7 @@ def load(path):
         token=token,
         require_token_local=bool(server.get("require_token_local", False)),
         allow_remote_write=bool(server.get("allow_remote_write", False)),
+        map=raw.get("map", {}),
     )
     spp_root = resolve(base, raw.get("spp_root", ""))
     for entry in raw.get("core", []):

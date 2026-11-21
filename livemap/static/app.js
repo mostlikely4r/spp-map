@@ -138,6 +138,111 @@ async function homePage() {
   if (document.activeElement !== search && state.q) { search.focus(); search.setSelectionRange(search.value.length, search.value.length); }
 }
 
+let mapSectionNode = null;
+let mapSectionNotice = null;
+
+async function mapSetting(key, value) {
+  if (mapSectionNotice) mapSectionNotice.textContent = 'saving ...';
+  try {
+    const d = await api('settings', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ section: 'map', key, value }) });
+    summaryCache = null;
+    if (mapSectionNotice) mapSectionNotice.textContent = '';
+    if (d.map) renderMapSection(d.map);
+  } catch (e) {
+    if (mapSectionNotice) mapSectionNotice.textContent = String(e.message || e);
+  }
+}
+
+async function deleteCache(core) {
+  if (mapSectionNotice) mapSectionNotice.textContent = 'deleting ...';
+  try {
+    const d = await api('mapcache', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ core }) });
+    if (mapSectionNotice) mapSectionNotice.textContent = `freed ${d.freed_mb} MB`;
+    if (d.map) renderMapSection(d.map);
+  } catch (e) {
+    if (mapSectionNotice) mapSectionNotice.textContent = String(e.message || e);
+  }
+}
+
+function renderMapSection(map) {
+  if (!mapSectionNode) return;
+  mapSectionNode.textContent = '';
+  mapSectionNode.append(...mapSectionBlocks(map));
+}
+
+function mapSectionBlocks(map) {
+  const v = map.values || {};
+  const def = map.defaults || {};
+  const isOn = key => v[key] === '1';
+  const chip = (label, active, run) => el('span', { class: 'chip' + (active ? ' on' : ''), onclick: run }, label);
+  const numberRow = (key, label, hint) => {
+    const input = el('input', { type: 'search', inputmode: 'numeric', value: v[key] || '', style: 'width:90px;display:inline-block' });
+    return el('div', { class: 'row' }, el('div', { class: 'name' }, label), el('div', { class: 'meta' }, hint),
+      el('div', {}, input, ' ', el('button', { class: 'ghost', onclick: () => mapSetting(key, input.value.trim()) }, 'save')));
+  };
+  const usage = map.usage || { total_mb: 0, cores: {} };
+  const cores = Object.keys(map.clients || {});
+  const saved = Object.entries(usage.cores || {}).map(([k, n]) => `${k} ${n} MB`).join(', ');
+  const orderInput = el('input', { type: 'search', value: v.fallback_order || '', style: 'width:170px;display:inline-block' });
+  const blocks = [
+    el('h2', {}, 'Map'),
+    el('p', { class: 'sub' }, 'Close zoom is drawn from the game client terrain files, on demand. The minimap still covers zoomed-out views.'),
+    el('div', { class: 'row' },
+      el('div', { class: 'name' }, 'Keep a copy on disk'),
+      el('div', { class: 'meta' }, `using ${usage.total_mb} MB of ${v.cache_mb || def.cache_mb} MB` + (saved ? ' · ' + saved : '')),
+      el('div', { class: 'chips' },
+        chip(isOn('keep_cache') ? 'cache on' : 'cache off', isOn('keep_cache'), () => mapSetting('keep_cache', isOn('keep_cache') ? '0' : '1')),
+        ...(usage.total_mb ? [chip('delete saved cache', false, () => deleteCache(null)),
+          ...cores.filter(c => usage.cores[c]).map(c => chip('delete ' + c, false, () => deleteCache(c)))] : []))),
+    numberRow('cache_mb', 'Cache size cap (MB)', 'oldest entries are dropped when the cache grows past this'),
+    el('h2', {}, 'Ground shading'),
+    el('div', { class: 'row' }, el('div', { class: 'name' }, 'default for new viewers'),
+      el('div', { class: 'meta' }, 'the map itself has a quick switch; every viewer remembers its own choice'),
+      el('div', { class: 'chips' }, ...(map.shades || ['soft']).map(name => chip(name, v.shading === name, () => mapSetting('shading', name))))),
+    numberRow('render_workers', 'Render workers', 'how many ground tiles are drawn at once (1-8)'),
+    el('h2', {}, 'Fallback client'),
+    el('div', { class: 'row' }, el('div', { class: 'name' }, 'use another core client'),
+      el('div', { class: 'meta' }, 'when the viewed core has no client, or its client has no terrain for that map'),
+      el('div', { class: 'chips' }, chip(isOn('fallback') ? 'fallback on' : 'fallback off', isOn('fallback'),
+        () => mapSetting('fallback', isOn('fallback') ? '0' : '1'))),
+      el('div', { class: 'meta' }, 'order (first that can read the map wins)'),
+      el('div', {}, orderInput, ' ', el('button', { class: 'ghost', onclick: () => mapSetting('fallback_order', orderInput.value.trim()) }, 'save order'))),
+    el('h2', {}, 'Client data folders'),
+    el('p', { class: 'sub' }, 'the Data folder that holds the game MPQ files'),
+  ];
+  for (const core of cores) {
+    const info = map.clients[core];
+    const input = el('input', { type: 'search', value: info.path || '', placeholder: 'path to the Data folder' });
+    const result = el('div', { class: 'meta' },
+      !info.path ? 'no client configured' : (info.exists ? 'folder found' : 'folder missing'));
+    const check = async () => {
+      result.textContent = 'checking ...';
+      try {
+        const r = await api('clientcheck', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ core, path: input.value.trim() }) });
+        result.textContent = r.ok
+          ? `ok · ${r.archives} archives · ${r.locale || 'locale unknown'} · read ${r.sample} in ${r.ms} ms`
+          : `failed · ${r.error || 'no terrain file could be read from it'}`;
+      } catch (e) { result.textContent = String(e.message || e); }
+    };
+    blocks.push(el('div', { class: 'row' },
+      el('div', { class: 'name' }, core),
+      el('div', { class: 'meta' }, info.configured ? 'set here' : 'from livemap.toml'),
+      el('div', {}, input),
+      el('div', { class: 'chips' },
+        chip('check', false, check),
+        chip('save', false, () => mapSetting('client.' + core, input.value.trim())),
+        chip('no client', false, () => mapSetting('client.' + core, '-')),
+        chip('reset', false, () => mapSetting('client.' + core, ''))),
+      result));
+  }
+  blocks.push(el('p', { class: 'sub' },
+    `renderer v${map.version} · RAM now: ${(map.ram || {}).adt_mb || 0} MB terrain, ${(map.ram || {}).render_mb || 0} MB tiles`));
+  return blocks;
+}
+
 async function settingsPage() {
   const d = await api('settings');
   view.textContent = '';
@@ -163,6 +268,13 @@ async function settingsPage() {
       }
       add(el('div', { class: 'row' }, el('div', { class: 'name' }, v.label), el('div', { class: 'meta' }, key + (v.value === null ? ' (not set, default ' + v.default + ')' : '')), el('div', {}, control)));
     }
+  }
+  if (d.map) {
+    mapSectionNode = el('div', {});
+    mapSectionNotice = el('div', { class: 'sub' });
+    add(mapSectionNode, mapSectionNotice);
+    if (!d.can_write) add(el('div', { class: 'notice' }, 'Client folders stay read-only from a remote session (allow_remote_write in livemap.toml turns that on); the other map settings can be changed.'));
+    renderMapSection(d.map);
   }
 }
 
@@ -273,12 +385,14 @@ function timeline(d) {
 }
 
 function drawRunMap(div, toggles, d) {
-  mapObj = L.map(div, { crs: L.CRS.Simple, minZoom: -6, maxZoom: 4, zoomSnap: 0.25, attributionControl: false });
+  mapObj = L.map(div, { crs: LM_CRS, minZoom: -6, maxZoom: 4, zoomSnap: 0.25, attributionControl: false });
+  mapObj.createPane('baseimg');
+  mapObj.getPane('baseimg').style.zIndex = 340;
   let bounds = null;
   if (d.basemap) {
     const b = d.basemap.bounds;
     bounds = L.latLngBounds(ll(b.bottom, b.left), ll(b.top, b.right));
-    L.imageOverlay(`/basemap/${d.run.core}/${d.basemap.image}`, bounds).addTo(mapObj);
+    L.imageOverlay(`/basemap/${d.run.core}/${d.basemap.image}`, bounds, { pane: 'baseimg' }).addTo(mapObj);
   }
   const markers = L.layerGroup().addTo(mapObj);
   for (const m of d.markers) {
@@ -315,6 +429,13 @@ function drawRunMap(div, toggles, d) {
   };
   addToggle('track', track, true);
   addToggle('quest markers', markers, true);
+  if (d.terrain_render && d.terrain_render.available) {
+    const tag = el('div', { class: 'wterrain hidden' });
+    div.append(tag);
+    const row = el('div', { class: 'chips wterrainrow' });
+    toggles.after(row);
+    mountTerrain(mapObj, d.run.core, d.map && d.map.id, d.terrain_render, () => bounds, { chips: row, tag });
+  }
   if (d.map && d.map.id !== null) addToggle('travel nodes', nodes, false, async () => {
     if (nodesLoaded) return;
     nodesLoaded = true;

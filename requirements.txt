@@ -1,3 +1,4 @@
 pymysql>=1.1
 mpyq>=0.2.5
 Pillow>=10.0
+numpy>=1.26
