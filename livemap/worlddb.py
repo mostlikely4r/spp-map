@@ -225,7 +225,7 @@ class WorldDb:
                 "bottom": float(r[0]) - 60, "top": float(r[1]) + 60, "right": float(r[2]) - 60, "left": float(r[3]) + 60}
         return self.cache[key]
 
-    def travel_nodes(self, map_id, bounds, limit=4000):
+    def travel_nodes(self, map_id, bounds, limit=4000, paths=True):
         args = (map_id, bounds["bottom"], bounds["top"], bounds["right"], bounds["left"])
         nodes = {
             nid: {"id": nid, "name": name, "x": float(x), "y": float(y), "z": float(z)}
@@ -243,13 +243,13 @@ class WorldDb:
         links = [(a, b, t) for a, b, t, *_ in rows]
         danger = {(a, b): [int(m0), int(m1), int(m2)] for a, b, t, m0, m1, m2 in rows}
         walk = {(a, b) for a, b, t in links if t == 1 and a in nodes and b in nodes}
-        paths = {}
-        if walk:
+        walked = {}
+        if walk and paths:
             for a, b, x, y in self.rows(
                     f"select node_id, to_node_id, x, y from ai_playerbot_travelnode_path where map_id=%s"
                     f" and node_id in ({marks}) order by node_id, to_node_id, nr", [map_id] + ids):
                 if (a, b) in walk:
-                    paths.setdefault((a, b), []).append([float(x), float(y)])
+                    walked.setdefault((a, b), []).append([float(x), float(y)])
         out_links = []
         seen = set()
         for a, b, t in links:
@@ -259,7 +259,7 @@ class WorldDb:
             if pair in seen:
                 continue
             seen.add(pair)
-            pts = paths.get((a, b)) or paths.get((b, a))
+            pts = walked.get((a, b)) or walked.get((b, a))
             if not pts:
                 if b not in nodes:
                     continue

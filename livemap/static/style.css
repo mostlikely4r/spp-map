@@ -51,15 +51,34 @@ h1 { font-size: 18px; margin: 4px 0 4px; word-break: break-word; }
 .leaflet-tooltip { font-size: 12px; }
 @media (min-width: 900px) { #map { height: 66vh; } }
 body.worldmode main { max-width: none; padding: 0; }
-.wbar { padding: 8px 10px 0; display: flex; flex-direction: column; gap: 6px; position: relative; }
+.wtop { display: flex; gap: 6px; align-items: center; padding: 8px 8px 6px; }
 .wrow { display: flex; gap: 6px; }
 .wrow > * { flex: 1 1 0; min-width: 0; }
 .wsel, .wsearch { padding: 7px 10px; font-size: 14px; border-radius: 9px; }
-.wresults { position: absolute; top: 46px; left: 10px; right: 10px; z-index: 1200; display: flex; flex-direction: column; gap: 3px; }
+.wmapsel { flex: 1 1 auto; min-width: 0; }
+.wbtn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 9px; border: 0;
+  background: var(--panel2); color: var(--text); font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.wbtn:active { background: #333844; }
+.wbadge { min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: #062230; font-size: 12px; font-weight: 700; text-align: center; }
+.wdrawer { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1100; display: flex; flex-direction: column;
+  background: #1b1e24; border-radius: 16px 16px 0 0; max-height: 68dvh; box-shadow: 0 -8px 28px rgba(0,0,0,.55); }
+.wdrawer.hidden { display: none; }
+.wdrawer-grab { width: 38px; height: 4px; border-radius: 2px; background: #3a3f49; margin: 6px auto 0; flex: none; }
+.wdrawer-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px 4px; flex: none; }
+.wdrawer-done { margin-left: auto; }
+.wdrawer-body { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 12px 18px; display: flex; flex-direction: column; gap: 14px; }
+.wdtitle { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 5px; }
+.wdsec .chips { flex-wrap: wrap; overflow: visible; padding: 0; }
+.wdsec.hidden { display: none; }
+.wdrow { display: flex; gap: 6px; }
+.wdrow > * { flex: 1 1 0; min-width: 0; }
+.wdrawer-backdrop { position: absolute; inset: 0; z-index: 1050; background: rgba(6,8,11,.45); }
+.wdrawer-backdrop.hidden { display: none; }
+.wresults { position: static; display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
 .wresults .row { padding: 8px 10px; cursor: pointer; }
 .wlayers, .wfloors { padding: 0 0 4px; }
 .wmapwrap { position: relative; }
-#wmap { height: calc(100dvh - 190px); min-height: 320px; background: #1c1f26; }
+#wmap { height: calc(100dvh - 122px); min-height: 320px; background: #1c1f26; }
 .wstatus { position: absolute; top: 6px; right: 8px; z-index: 900; background: rgba(17,19,23,.82); color: var(--muted); font-size: 12px; padding: 3px 8px; border-radius: 8px; pointer-events: none; }
 .wlegend { padding: 6px 10px 20px; }
 .wterrain { position: absolute; left: 8px; top: 82px; max-width: 78%; z-index: 1200; background: rgba(17,19,23,.82); color: #cfd2d8; font-size: 12px; padding: 3px 8px; border-radius: 8px; pointer-events: none; }
@@ -78,7 +97,11 @@ button.on { outline: 2px solid var(--accent); }
 .zlabel span { display: inline-block; transform: translate(-50%, -50%); color: #f4e6c0; font-size: 12px; font-weight: 600; text-shadow: 0 0 3px #000, 0 0 3px #000; white-space: nowrap; }
 .leaflet-tooltip.nlabel { background: rgba(17,19,23,.75); color: #fff; border: 0; box-shadow: none; padding: 0 4px; font-size: 11px; }
 .leaflet-tooltip.nlabel::before { display: none; }
-@media (min-width: 900px) { #wmap { height: calc(100vh - 150px); } .sheet { left: auto; width: 380px; max-height: 70%; } }
+@media (min-width: 900px) {
+  #wmap { height: calc(100vh - 118px); }
+  .sheet { left: auto; width: 380px; max-height: 70%; }
+  .wdrawer { left: auto; right: 0; top: 0; bottom: auto; width: 380px; max-height: 100%; border-radius: 0; }
+}
 .wpinwrap { background: none; border: 0; }
 .wpin { position: absolute; left: 0; top: 0; display: block; min-width: 20px; padding: 1px 5px; border-radius: 999px;
   background: rgba(11,15,20,.88); border: 2px solid #48dbfb; color: #fff; font-size: 11px; font-weight: 700;

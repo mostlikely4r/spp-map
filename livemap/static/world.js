@@ -153,7 +153,9 @@ async function worldPage(core, mapId) {
     W.info = { id: 'world', name: 'World + dungeons', basemaps: [], zones: [], extent: null };
   } else W.info = await api(`mapinfo?core=${W.core}&map=${W.map}`);
 
-  const mapSelect = el('select', { class: 'wsel', onchange: e => go(`/w/${W.core}/${e.target.value}`) });
+  const mapSelect = el('select', { class: 'wsel wmapsel', onchange: e => go(`/w/${W.core}/${e.target.value}`) });
+  const badge = el('span', { class: 'wbadge' }, '0');
+  const layersBtn = el('button', { class: 'wbtn', onclick: () => setDrawer(true) }, 'Layers', badge);
   const colorSelect = el('select', { class: 'wsel', onchange: e => { W.color = e.target.value; store('wcolor', W.color); redrawBots(); legend(); } },
     COLOR_MODES.map(([v, l]) => el('option', { value: v, selected: v === W.color ? 'selected' : null }, 'colour: ' + l)));
   const filterSelect = el('select', { class: 'wsel', onchange: e => { W.filter = e.target.value; store('wfilter', W.filter); redrawBots(); } },
@@ -169,7 +171,7 @@ async function worldPage(core, mapId) {
       if (q.length < 2) return;
       const hits = await api(`live/find?core=${W.core}&q=${encodeURIComponent(q)}`);
       for (const h of hits) results.append(el('div', { class: 'row', onclick: () => {
-        results.textContent = ''; search.value = '';
+        results.textContent = ''; search.value = ''; setDrawer(false);
         if (h.map === W.map || worldScene()) selectBot(h.guid, true); else go(`/w/${W.core}/${h.map}?bot=${h.guid}`);
       } }, el('span', { class: 'name' }, h.name), el('span', { class: 'meta' }, ` level ${h.level} · ${h.bot ? 'bot' : 'player'} · map ${h.map}`)));
       if (!hits.length) results.append(el('div', { class: 'row meta' }, 'nobody online by that name'));
@@ -180,16 +182,29 @@ async function worldPage(core, mapId) {
     NPC_MODES.map(([v, l]) => el('option', { value: v, selected: v === W.npcColor ? 'selected' : null }, l)));
   const pathSelect = el('select', { class: 'wsel', onchange: e => { W.pathColor = e.target.value; store('wpathcolor', W.pathColor); if (W.on.nodes) loadViewportLayer('nodes'); } },
     PATH_MODES.map(([v, l]) => el('option', { value: v, selected: v === W.pathColor ? 'selected' : null }, l)));
-  const styleRow = el('div', { class: 'wrow' }, npcSelect, pathSelect);
+  const styleRow = el('div', { class: 'wdrow' }, npcSelect, pathSelect);
   const status = el('div', { class: 'wstatus' });
   const legendBox = el('div', { class: 'legend wlegend' });
   const mapDiv = el('div', { id: 'wmap' });
   const sheet = el('div', { class: 'sheet hidden' });
   const terrainTag = el('div', { class: 'wterrain hidden' });
   const terrainRow = el('div', { class: 'chips wterrainrow' });
-  add(el('div', { class: 'wbar' }, el('div', { class: 'wrow' }, mapSelect, search), results,
-      el('div', { class: 'wrow' }, colorSelect, filterSelect), chips, styleRow),
-    el('div', { class: 'wmapwrap' }, mapDiv, sheet, status, terrainTag), legendBox);
+  const ground = el('div', { class: 'wdsec' }, el('div', { class: 'wdtitle' }, 'Ground'), terrainRow);
+  const sceneBlock = el('div', { class: 'wdsec hidden' });
+  const drawerBody = el('div', { class: 'wdrawer-body' },
+    el('div', { class: 'wdsec' }, search, results),
+    el('div', { class: 'wdrow' }, colorSelect, filterSelect),
+    el('div', { class: 'wdsec' }, el('div', { class: 'wdtitle' }, 'Show'), chips),
+    ground, sceneBlock,
+    el('div', { class: 'wdsec' }, el('div', { class: 'wdtitle' }, 'Style'), styleRow));
+  const drawer = el('div', { class: 'wdrawer hidden' },
+    el('div', { class: 'wdrawer-grab' }),
+    el('div', { class: 'wdrawer-head' }, el('strong', {}, 'Layers and options'),
+      el('button', { class: 'ghost wdrawer-done', onclick: () => setDrawer(false) }, 'done')),
+    drawerBody);
+  const backdrop = el('div', { class: 'wdrawer-backdrop hidden', onclick: () => setDrawer(false) });
+  add(el('div', { class: 'wtop' }, mapSelect, layersBtn),
+    el('div', { class: 'wmapwrap' }, mapDiv, status, terrainTag, sheet, backdrop, drawer), legendBox);
   if (worldScene()) {
     const placeSelect = el('select', { class: 'wsel', onchange: e => {
       store('wplace', e.target.value);
@@ -198,10 +213,11 @@ async function worldPage(core, mapId) {
     } }, PLACE_MODES.map(([v, l]) => el('option', { value: v, selected: v === W.placeMode ? 'selected' : null }, l)));
     W.honestChip = el('span', { class: 'chip' + (W.honest ? ' on' : ''), onclick: () => setScene({ honest: !W.honest }) }, 'honest (stack at doors)');
     W.plainChip = el('span', { class: 'chip' + (W.plain ? ' on' : ''), onclick: () => setScene({ plain: !W.plain }) }, 'plain art (no borders)');
-    chips.before(el('div', { class: 'wrow' }, placeSelect), el('div', { class: 'chips wlayers' }, W.honestChip, W.plainChip));
+    sceneBlock.classList.remove('hidden');
+    sceneBlock.append(el('div', { class: 'wdtitle' }, 'World scene'), placeSelect, el('div', { class: 'chips' }, W.honestChip, W.plainChip));
   }
-  W.ui = { mapSelect, chips, status, legendBox, sheet, styleRow, npcSelect, pathSelect, terrainTag, terrainRow };
-  chips.after(terrainRow);
+  W.ui = { mapSelect, chips, status, legendBox, sheet, styleRow, npcSelect, pathSelect, terrainTag, terrainRow,
+    drawer, backdrop, badge, ground, layersBtn };
   styleVisibility();
 
   mapObj = L.map(mapDiv, { crs: LM_CRS, minZoom: -7, maxZoom: 4, zoomSnap: 0.25, attributionControl: false, preferCanvas: true });
@@ -221,13 +237,14 @@ async function worldPage(core, mapId) {
     ['intents', 'travel intent'], ['npcs', 'NPCs'], ['objects', 'objects'], ['nodes', 'travel nodes'], ['tele', 'teleport cache']]) {
     if (key === 'zones' && worldScene()) continue;
     const chip = el('span', { class: 'chip' + (W.on[key] ? ' on' : '') }, label);
-    chip.onclick = () => { W.on[key] = !W.on[key]; chip.classList.toggle('on', W.on[key]); wSaveLayers(); applyLayer(key); };
+    chip.onclick = () => { W.on[key] = !W.on[key]; chip.classList.toggle('on', W.on[key]); wSaveLayers(); applyLayer(key); updateLayerBadge(); };
     chips.append(chip);
   }
+  updateLayerBadge();
   for (const key of Object.keys(W.on)) applyLayer(key);
   mapObj.on('moveend', debounce(() => { refreshViewportLayers(); updateZones(); updateNames(); updateZoneLevelLabels(); updateLod(); updateClusterChips(); saveView(); }, 400));
   mapObj.on('zoomend', debounce(() => { updateLod(); updateClusterChips(); if (W.terrain) W.terrain.sync(); }, 150));
-  mapObj.on('click', () => closeSheet());
+  mapObj.on('click', () => { closeSheet(); setDrawer(false); });
   ingestSnapshot(await api(`live?core=${W.core}&map=${W.map}`));
   const want = new URLSearchParams(location.search).get('bot');
   if (want) selectBot(+want, true);
@@ -236,6 +253,20 @@ async function worldPage(core, mapId) {
   legend();
 }
 
+
+function setDrawer(open) {
+  if (!W.ui || !W.ui.drawer) return;
+  if (open && W.selected) closeSheet();
+  W.ui.drawer.classList.toggle('hidden', !open);
+  W.ui.backdrop.classList.toggle('hidden', !open);
+  if (open) updateLayerBadge();
+}
+
+function updateLayerBadge() {
+  if (!W.ui || !W.ui.badge) return;
+  const active = Object.keys(W.on).filter(k => W.on[k] && (k !== 'zones' || !worldScene())).length;
+  W.ui.badge.textContent = String(active);
+}
 
 function terrainInfo() {
   return (W.info && W.info.terrain_render) || { available: false };
@@ -557,7 +588,7 @@ function drawBase() {
   if (wmo || terrain)
     row.append(el('span', { class: 'chip' + (W.art === 'minimap' ? ' on' : ''), onclick: () => setArt(W.art === 'minimap' ? 'painted' : 'minimap') },
       W.art === 'minimap' ? 'real ground' : 'ground instead of painted map'));
-  if (row.children.length) W.ui.chips.after(row);
+  if (row.children.length) W.ui.ground.append(row);
   if (W.terrain) W.terrain.sync();
 }
 
@@ -804,7 +835,9 @@ async function loadViewportLayer(key) {
   const d = await api('layer?' + q.toString());
   const scene = !!d.scene;
   const at = (map, x, y) => bpos(scene ? map : W.map, x, y);
-  const rows = list => (list || []).map(r => (scene ? { map: r[0], v: r.slice(1) } : { map: W.map, v: r }));
+  const rows = list => (list || []).map(r => (Array.isArray(r)
+    ? { map: scene ? r[0] : W.map, v: scene ? r.slice(1) : r }
+    : { map: r.map === undefined || r.map === null ? W.map : r.map, v: r }));
   const bins = rows(d.bins);
   const max = Math.max(1, ...bins.map(o => o.v[2]));
   const layer = W.layers[key];
