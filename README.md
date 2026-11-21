@@ -126,9 +126,10 @@ the same (`data/access_token.txt`; delete it to issue a new one).
   `z=0` is 2x2, `z=-1` is one ADT per tile (2.08 yd/px, the minimap resolution). Above `z=1` the
   browser scales the native tiles up; below `z=-1` the viewer uses the minimap image instead. Tiles
   for ocean or missing ADTs return `204`.
-- **Caches:** parsed ADTs (120 MB), decoded textures (24 MB) and rendered ADT images (112 MB) live in
-  RAM as LRUs shared by every client; each render also warms its eight neighbour ADTs in the
-  background so the next pan is instant. With "keep a copy on disk" on, rendered ADTs go to
+- **Caches:** parsed ADTs (80 MB), rendered ADT images (80 MB), decoded ground textures (24 MB), WMO
+  roots (128 files), WMO group geometry (40 MB) and WMO texture tiles (8 MB) live in RAM as LRUs
+  shared by every client; each render also warms its eight neighbour ADTs in the background so the
+  next pan is instant. With "keep a copy on disk" on, rendered ADTs go to
   `data/adtcache/<core>/<source core>/<map>/v<renderer>/<x>/<y>_<shade>.webp`, capped and evicted
   oldest-first. The cache key carries the renderer version, so a bump never serves stale tiles and the
   browser may cache tiles for a week.
@@ -158,8 +159,8 @@ the same (`data/access_token.txt`; delete it to issue a new one).
   a warm zone and instant for cached ones. A town ADT pays for its buildings once: measured 0.8 s
   (Northshire abbey), 1.8 s (Stormwind) to 3.2 s (Goldshire's ADT, which also contains a corner of
   Stormwind) on the first render, and 0.3-0.8 s per additional shading preset, because the WMO
-  geometry, its textures and the rendered image are all cached. Server RSS stays under ~350 MB with
-  the RAM caches full.
+  geometry, its textures and the rendered image are all cached. Server RSS settles around 330 MB with
+  those caches full (the caps add up to ~232 MB; the budget is 400 MB).
 
 ## What the data needs
 
