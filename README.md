@@ -66,11 +66,16 @@ What works today:
   instead of the minimap art: one ADT per request, splatted ground textures, hillshade relief from the
   height field and real liquid layers, at half a yard per pixel (four times sharper than the minimap).
   It switches on by zoom (minimap below ~2 yd/px, rendered ground at and above), has a shading switch
-  (soft / medium / strong / flat) and a "detailed ground" on/off chip in the map's layer row, and a
-  Settings section for the cache, the shading default, worker count and client folders. Buildings are
-  missing until phase R2; terrain holes are transparent so the minimap shows through. See
+  (soft / medium / strong / flat) and a "detailed ground" on/off chip in the map's layer drawer, and a
+  Settings section for the cache, the shading default, worker count and client folders. Buildings
+  (world models placed in the terrain) are drawn on top of the ground, so towns read as towns and the
+  terrain holes are filled by the building instead of the minimap doodle. See
   [Ground (terrain) layer](#ground-terrain-layer).
 
+- **One button for the controls.** The live map keeps the map itself full-screen: a single floating
+  "Layers" pill (with a count of the active layers) opens a drawer holding the map selector, search,
+  colour/filter, every layer toggle, the ground controls, the scene options and the (collapsible)
+  legend. On a wide window the drawer becomes a floating panel on the right.
 - **Phone first.** Mobile layout, short links (`/r/<run>`, `/t/<core>/<test>`), and an optional
   Cloudflare quick tunnel with token login, so you can use it away from the PC.
 - **Snapshots.** `livemap snapshot` renders a run page to a PNG (also at `/snapshot/run/<id>.png`).
@@ -135,13 +140,26 @@ the same (`data/access_token.txt`; delete it to issue a new one).
   map, another core's client renders it (order in Settings, default `tbc, vanilla`). The map shows
   "terrain: rendered from the <core> client" and the disk cache keeps those tiles apart. A core whose
   client DBC has map 571 (Northrend) is treated as WotLK and is not used for terrain until R3.
+- **Buildings (R2):** each ADT's `MODF` placements are read (and taken from the eight neighbouring
+  ADTs too, so a building that crosses a tile edge is complete; the client repeats the same record in
+  every ADT it touches, so they are de-duplicated). For each placed WMO the root (materials, group
+  boxes) and its group files (`MOVT`/`MOVI`/`MOPY`/`MOTV`) are parsed once and cached, then the
+  triangles are projected top-down: bounding-box culling per placement and group, up-facing and
+  area filters per triangle, big triangles filled in depth order, small ones splatted and dilated,
+  colour sampled from the material texture at the triangle's UV. Roofs get a slope shade and the
+  silhouette a dark outline so a town reads at a glance. Trees, doodads and M2 props are still R4;
+  WotLK formats are still R3.
 - **Settings** (`/settings`, section "Map", stored in `data/livemap.sqlite`): keep cache on/off, cache
   size cap with current usage, delete the saved cache (all cores or one), default shading, render
   workers, fallback on/off and order, and the client `Data` folder per core with a check button
   (reports the archive count, locale and whether a sample ADT can be read). Client folders are a
   filesystem path, so they are editable locally only unless `allow_remote_write = true`.
 - **Cost:** first tile after start ~5 s (MPQ tables are parsed by `mpyq`), then ~0.25 s per new ADT on
-  a warm zone and instant for cached ones; server RSS stays under ~350 MB with the RAM caches full.
+  a warm zone and instant for cached ones. A town ADT pays for its buildings once: measured 0.8 s
+  (Northshire abbey), 1.8 s (Stormwind) to 3.2 s (Goldshire's ADT, which also contains a corner of
+  Stormwind) on the first render, and 0.3-0.8 s per additional shading preset, because the WMO
+  geometry, its textures and the rendered image are all cached. Server RSS stays under ~350 MB with
+  the RAM caches full.
 
 ## What the data needs
 

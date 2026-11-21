@@ -51,13 +51,15 @@ h1 { font-size: 18px; margin: 4px 0 4px; word-break: break-word; }
 .leaflet-tooltip { font-size: 12px; }
 @media (min-width: 900px) { #map { height: 66vh; } }
 body.worldmode main { max-width: none; padding: 0; }
-.wtop { display: flex; gap: 6px; align-items: center; padding: 8px 8px 6px; }
+.wfab { position: absolute; right: 10px; bottom: 10px; z-index: 1040; display: flex; gap: 8px; }
+.wfab.hidden { display: none; }
 .wrow { display: flex; gap: 6px; }
 .wrow > * { flex: 1 1 0; min-width: 0; }
 .wsel, .wsearch { padding: 7px 10px; font-size: 14px; border-radius: 9px; }
 .wmapsel { flex: 1 1 auto; min-width: 0; }
-.wbtn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 9px; border: 0;
-  background: var(--panel2); color: var(--text); font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.wbtn { display: inline-flex; align-items: center; gap: 7px; padding: 11px 15px; border-radius: 999px; border: 1px solid #3a3f49;
+  background: rgba(26,29,36,.94); color: var(--text); font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0,0,0,.45); }
 .wbtn:active { background: #333844; }
 .wbadge { min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: #062230; font-size: 12px; font-weight: 700; text-align: center; }
 .wdrawer { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1100; display: flex; flex-direction: column;
@@ -70,6 +72,9 @@ body.worldmode main { max-width: none; padding: 0; }
 .wdtitle { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 5px; }
 .wdsec .chips { flex-wrap: wrap; overflow: visible; padding: 0; }
 .wdsec.hidden { display: none; }
+.wdlegend { border-top: 1px solid #2c2f36; padding-top: 8px; }
+.wdlegend summary { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); cursor: pointer; }
+.wdlegend .legend { padding: 8px 0 0; }
 .wdrow { display: flex; gap: 6px; }
 .wdrow > * { flex: 1 1 0; min-width: 0; }
 .wdrawer-backdrop { position: absolute; inset: 0; z-index: 1050; background: rgba(6,8,11,.45); }
@@ -78,8 +83,8 @@ body.worldmode main { max-width: none; padding: 0; }
 .wresults .row { padding: 8px 10px; cursor: pointer; }
 .wlayers, .wfloors { padding: 0 0 4px; }
 .wmapwrap { position: relative; }
-#wmap { height: calc(100dvh - 122px); min-height: 320px; background: #1c1f26; }
-.wstatus { position: absolute; top: 6px; right: 8px; z-index: 900; background: rgba(17,19,23,.82); color: var(--muted); font-size: 12px; padding: 3px 8px; border-radius: 8px; pointer-events: none; }
+#wmap { height: calc(100dvh - 68px); min-height: 320px; background: #1c1f26; }
+.wstatus { position: absolute; top: 6px; right: 8px; max-width: calc(100% - 62px); z-index: 900; background: rgba(17,19,23,.82); color: var(--muted); font-size: 12px; padding: 3px 8px; border-radius: 8px; pointer-events: none; }
 .wlegend { padding: 6px 10px 20px; }
 .wterrain { position: absolute; left: 8px; top: 82px; max-width: 78%; z-index: 1200; background: rgba(17,19,23,.82); color: #cfd2d8; font-size: 12px; padding: 3px 8px; border-radius: 8px; pointer-events: none; }
 .wterrain.hidden { display: none; }
@@ -98,9 +103,10 @@ button.on { outline: 2px solid var(--accent); }
 .leaflet-tooltip.nlabel { background: rgba(17,19,23,.75); color: #fff; border: 0; box-shadow: none; padding: 0 4px; font-size: 11px; }
 .leaflet-tooltip.nlabel::before { display: none; }
 @media (min-width: 900px) {
-  #wmap { height: calc(100vh - 118px); }
+  #wmap { height: calc(100vh - 64px); }
   .sheet { left: auto; width: 380px; max-height: 70%; }
-  .wdrawer { left: auto; right: 0; top: 0; bottom: auto; width: 380px; max-height: 100%; border-radius: 0; }
+  .wdrawer { left: auto; right: 10px; bottom: 64px; top: auto; width: 390px; max-height: min(72dvh, 640px); border-radius: 14px; }
+  .wdrawer-grab { display: none; }
 }
 .wpinwrap { background: none; border: 0; }
 .wpin { position: absolute; left: 0; top: 0; display: block; min-width: 20px; padding: 1px 5px; border-radius: 999px;

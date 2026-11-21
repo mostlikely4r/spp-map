@@ -192,19 +192,21 @@ async function worldPage(core, mapId) {
   const ground = el('div', { class: 'wdsec' }, el('div', { class: 'wdtitle' }, 'Ground'), terrainRow);
   const sceneBlock = el('div', { class: 'wdsec hidden' });
   const drawerBody = el('div', { class: 'wdrawer-body' },
+    el('div', { class: 'wdsec' }, el('div', { class: 'wdtitle' }, 'Map'), mapSelect),
     el('div', { class: 'wdsec' }, search, results),
     el('div', { class: 'wdrow' }, colorSelect, filterSelect),
     el('div', { class: 'wdsec' }, el('div', { class: 'wdtitle' }, 'Show'), chips),
     ground, sceneBlock,
-    el('div', { class: 'wdsec' }, el('div', { class: 'wdtitle' }, 'Style'), styleRow));
+    el('div', { class: 'wdsec' }, el('div', { class: 'wdtitle' }, 'Style'), styleRow),
+    el('details', { class: 'wdlegend' }, el('summary', {}, 'Legend'), legendBox));
   const drawer = el('div', { class: 'wdrawer hidden' },
     el('div', { class: 'wdrawer-grab' }),
     el('div', { class: 'wdrawer-head' }, el('strong', {}, 'Layers and options'),
       el('button', { class: 'ghost wdrawer-done', onclick: () => setDrawer(false) }, 'done')),
     drawerBody);
   const backdrop = el('div', { class: 'wdrawer-backdrop hidden', onclick: () => setDrawer(false) });
-  add(el('div', { class: 'wtop' }, mapSelect, layersBtn),
-    el('div', { class: 'wmapwrap' }, mapDiv, status, terrainTag, sheet, backdrop, drawer), legendBox);
+  add(el('div', { class: 'wmapwrap' }, mapDiv, status, terrainTag, sheet, backdrop, drawer,
+    el('div', { class: 'wfab' }, layersBtn)));
   if (worldScene()) {
     const placeSelect = el('select', { class: 'wsel', onchange: e => {
       store('wplace', e.target.value);
@@ -217,7 +219,7 @@ async function worldPage(core, mapId) {
     sceneBlock.append(el('div', { class: 'wdtitle' }, 'World scene'), placeSelect, el('div', { class: 'chips' }, W.honestChip, W.plainChip));
   }
   W.ui = { mapSelect, chips, status, legendBox, sheet, styleRow, npcSelect, pathSelect, terrainTag, terrainRow,
-    drawer, backdrop, badge, ground, layersBtn };
+    drawer, backdrop, badge, ground, layersBtn, fab: document.querySelector('.wfab') };
   styleVisibility();
 
   mapObj = L.map(mapDiv, { crs: LM_CRS, minZoom: -7, maxZoom: 4, zoomSnap: 0.25, attributionControl: false, preferCanvas: true });
@@ -307,7 +309,10 @@ function fillTerrainChips(row, info, sync) {
     }
     return;
   }
-  if (!info || !info.available) return;
+  if (!info || !info.available) {
+    if (info && info.pending) row.append(el('span', { class: 'chip' }, 'checking the client ...'));
+    return;
+  }
   const prefs = terrainPrefs(info);
   const chip = (label, on, run, hint) => {
     const node = el('span', { class: 'chip' + (on ? ' on' : ''), title: hint || null }, label);
@@ -691,7 +696,8 @@ function ingestSnapshot(snap) {
   if (worldScene()) updateLod();
   const lost = worldScene() && W.notPlaced ? ' / not placed: ' + W.notPlaced : '';
   const age = snap.live ? 'live' : 'not live (server stopped or positions log off)';
-  W.ui.status.textContent = `${snap.core} · ${age} · ${snap.bots.length} here · ${snap.newest ? snap.newest.slice(11) : 'no data yet'}${lost}`;
+  const where = W.info && W.info.name ? W.info.name : '';
+  W.ui.status.textContent = `${where}${where ? ' · ' : ''}${snap.core} · ${age} · ${snap.bots.length} here · ${snap.newest ? snap.newest.slice(11) : 'no data yet'}${lost}`;
   if (W.selected) refreshSelected();
 }
 
@@ -907,6 +913,7 @@ async function loadViewportLayer(key) {
 
 function closeSheet() {
   W.selected = null; W.follow = false;
+  if (W.ui && W.ui.fab) W.ui.fab.classList.remove('hidden');
   W.layers && W.layers.sel.clearLayers();
   W.ui.sheet.classList.add('hidden');
   const u = new URL(location.href); u.searchParams.delete('bot'); history.replaceState({}, '', u.pathname + u.search);
@@ -929,6 +936,7 @@ async function refreshSelected(center) {
   drawTrail(card);
   if (here) L.circleMarker(here, { radius: 11, color: '#28c8ff', weight: 3, fill: false }).addTo(W.layers.sel);
   if (here && (center || W.follow)) mapObj.setView(here, Math.max(mapObj.getZoom(), center ? (worldScene() ? -3 : -1) : mapObj.getZoom()));
+  if (W.ui.fab) W.ui.fab.classList.add('hidden');
   renderCard(card);
 }
 

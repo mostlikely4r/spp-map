@@ -9,24 +9,29 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
+from . import wmomodel
 from .clientdata import ClientArchives, dbc_string, read_dbc
 
 ADT_YD = 533.33333333
+GRID_YD = 17066.66666667
 ADT_PX = 1024
 PPC = 64
 REPEATS = 8
 TILE_PX = 256
 MIN_LEVEL = -1
 MAX_LEVEL = 1
-RENDER_VERSION = 1
+RENDER_VERSION = 3
 CHUNK_YD = ADT_YD / 16
 APRON_PX = ADT_PX + 128
 
-ADT_PARSE_MB = 120
-RENDER_MB = 112
+ADT_PARSE_MB = 96
+RENDER_MB = 96
 TEXTURE_MB = 24
+WMO_MB = 48
+BUILD_MIN_AREA = 0.6
+BUILD_BIG_AREA = 6.0
 
 SHADING = {
     "soft": {"light": (-0.30, -0.40, 0.87), "amb": 0.60, "k": 0.45, "lo": 0.50, "hi": 1.10, "sh": 0.15},
@@ -45,7 +50,7 @@ WATER_COLOUR = {
 
 MISSING = object()
 SAFE = re.compile(r"[^a-z0-9_.-]+")
-SKIP_ARCHIVES = re.compile(r"^(sound|speech|fonts|item|dbc|interface|misc|backup|model|wmo)", re.I)
+SKIP_ARCHIVES = re.compile(r"^(sound|speech|fonts|item|dbc|interface|misc|backup|model)", re.I)
 
 
 class Lru:
@@ -99,7 +104,7 @@ class Chunk:
 
 
 class Adt:
-    __slots__ = ("col", "row", "textures", "chunks", "hf", "valid", "bytes")
+    __slots__ = ("col", "row", "textures", "chunks", "hf", "placements", "valid", "bytes")
 
 
 def upsample_matrix(n_in, n_out):
@@ -165,6 +170,10 @@ def parse_adt(data, col, row):
         outer = np.concatenate([h[r * 17:r * 17 + 9] for r in range(9)]).reshape(9, 9)
         hf[chunk.iy * 8:chunk.iy * 8 + 9, chunk.ix * 8:chunk.ix * 8 + 9] = outer
     adt.hf = hf
+    try:
+        adt.placements = wmomodel.adt_placements(data)
+    except struct.error:
+        adt.placements = []
     adt.valid = bool(adt.chunks)
     adt.bytes = sum(c.heights.nbytes + sum(a.nbytes for _, a in c.layers if a is not None)
                     + (c.shadow.nbytes if c.shadow is not None else 0) for c in adt.chunks)
@@ -267,7 +276,7 @@ class TextureCache:
         return tile
 
 
-def render_adt(adt, textures, preset, pad):
+def render_adt(adt, textures, preset, pad, buildings=None):
     rgb = np.zeros((ADT_PX, ADT_PX, 3), np.float32)
     alpha = np.full((ADT_PX, ADT_PX), 255, np.uint8)
     darken = preset["sh"]
@@ -290,7 +299,8 @@ def render_adt(adt, textures, preset, pad):
                 if chunk.holes & (1 << bit):
                     hy, hx = bit // 4, bit % 4
                     alpha[y0 + hy * block:y0 + (hy + 1) * block, x0 + hx * block:x0 + (hx + 1) * block] = 0
-    rgb *= shaded_relief(pad, preset)[..., None]
+    heights = relief_field(pad)
+    rgb *= shaded_relief(heights, preset)[..., None]
     for chunk in adt.chunks:
         liquid = chunk.liquid
         if liquid is None:
@@ -310,18 +320,138 @@ def render_adt(adt, textures, preset, pad):
         block = rgb[y0:y0 + PPC, x0:x0 + PPC]
         block *= (1.0 - weight)[..., None]
         block += colour * weight[..., None]
+    if buildings is not None:
+        b_rgb, b_mask = buildings
+        rgb[b_mask] = b_rgb[b_mask]
+        alpha[b_mask] = 255
     out = np.empty((ADT_PX, ADT_PX, 4), np.uint8)
     out[:, :, :3] = np.clip(rgb * 255.0, 0, 255).astype(np.uint8)
     out[:, :, 3] = alpha
     return Image.fromarray(out, "RGBA")
 
 
-def shaded_relief(pad, preset):
-    if preset["light"] is None or pad is None:
-        return np.ones((ADT_PX, ADT_PX), np.float32)
+def draw_buildings(renderer, placements, left, top):
+    yard_px = CHUNK_YD / PPC
+    size = ADT_PX
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    pen = ImageDraw.Draw(canvas)
+    large = []
+    dot_x, dot_y, dot_tone, dot_z = [], [], [], []
+    ink = {}
+    seen = set()
+    for uid, name, position, rotation, scale in placements:
+        mark = (name.lower(), uid)
+        if mark in seen:
+            continue
+        seen.add(mark)
+        root = renderer.wmo_root(name)
+        if root is None:
+            continue
+        lo, hi = root["bbox"]
+        if lo != hi and not wmomodel.box_in_view(lo, hi, position, rotation, scale, left, top, yard_px, size):
+            continue
+        textures = root["textures"]
+        for index in range(min(root["n_groups"], len(root["groups"]))):
+            gmin, gmax = root["groups"][index]
+            if not wmomodel.box_in_view(gmin, gmax, position, rotation, scale, left, top, yard_px, size):
+                continue
+            group = renderer.wmo_group(name, index)
+            if group is None:
+                continue
+            wx, wy, wz = wmomodel.transform(group["verts"], position, rotation, scale)
+            px = (left - wy) / yard_px
+            py = (top - wx) / yard_px
+            tris = group["tris"]
+            verts = group["verts"]
+            x0, x1, x2 = px[tris[:, 0]], px[tris[:, 1]], px[tris[:, 2]]
+            y0, y1, y2 = py[tris[:, 0]], py[tris[:, 1]], py[tris[:, 2]]
+            area = np.abs((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)) * 0.5
+            normals = np.cross(verts[tris[:, 1]] - verts[tris[:, 0]], verts[tris[:, 2]] - verts[tris[:, 0]])
+            upness = np.abs(normals[:, 2]) / (np.linalg.norm(normals, axis=1) + 1e-6)
+            keep = (area > BUILD_MIN_AREA) & (upness > 0.2)
+            keep &= (np.maximum(np.maximum(x0, x1), x2) >= 0) & (np.minimum(np.minimum(x0, x1), x2) <= size)
+            keep &= (np.maximum(np.maximum(y0, y1), y2) >= 0) & (np.minimum(np.minimum(y0, y1), y2) <= size)
+            if not keep.any():
+                continue
+            chosen = np.nonzero(keep)[0]
+            mats = group["mats"]
+            uvs = group.get("uvs")
+            if uvs is not None:
+                tu = ((uvs[tris[chosen, 0]] + uvs[tris[chosen, 1]] + uvs[tris[chosen, 2]]) / 3.0) % 1.0
+                tiles = {m: renderer.wmo_texture(textures[m] if m < len(textures) else "")
+                         for m in set(mats[chosen].tolist())}
+                tones = np.empty((chosen.size, 3), np.float32)
+                for mat, tile in tiles.items():
+                    sel = np.nonzero(mats[chosen] == mat)[0]
+                    sx = np.clip((tu[sel, 0] * 32).astype(np.int32), 0, 31)
+                    sy = np.clip((tu[sel, 1] * 32).astype(np.int32), 0, 31)
+                    tones[sel] = tile[sy, sx]
+            else:
+                uniq, inverse = np.unique(mats[chosen], return_inverse=True)
+                bases = np.array([renderer.wmo_colour(textures[m] if m < len(textures) else "") for m in uniq],
+                                 np.float32)
+                tones = bases[inverse]
+            light = 0.58 + 0.42 * upness[chosen]
+            tones = tones * light[:, None]
+            zc = (wz[tris[chosen, 0]] + wz[tris[chosen, 1]] + wz[tris[chosen, 2]]) / 3.0
+            big = area[chosen] > BUILD_BIG_AREA
+            for slot in np.nonzero(big)[0]:
+                n = chosen[slot]
+                a, b, c = int(tris[n, 0]), int(tris[n, 1]), int(tris[n, 2])
+                key = (int(mats[n]), int(light[slot] * 12))
+                tone = ink.get(key)
+                if tone is None:
+                    tone = tuple(int(min(255, max(0, v * 255))) for v in tones[slot]) + (255,)
+                    ink[key] = tone
+                large.append((float(zc[slot]), (px[a], py[a]), (px[b], py[b]), (px[c], py[c]), tone))
+            small = ~big
+            if small.any():
+                pick = chosen[small]
+                dot_x.append((px[tris[pick, 0]] + px[tris[pick, 1]] + px[tris[pick, 2]]) / 3.0)
+                dot_y.append((py[tris[pick, 0]] + py[tris[pick, 1]] + py[tris[pick, 2]]) / 3.0)
+                dot_tone.append((tones[small] * 255.0).astype(np.uint8))
+                dot_z.append(zc[small])
+    if dot_x:
+        ix = np.clip(np.concatenate(dot_x).astype(np.int32), 0, size - 1)
+        iy = np.clip(np.concatenate(dot_y).astype(np.int32), 0, size - 1)
+        tones = np.concatenate(dot_tone)
+        order = np.argsort(np.concatenate(dot_z), kind="stable")
+        layer = np.zeros((size, size, 4), np.uint8)
+        layer[iy[order], ix[order], :3] = tones[order]
+        layer[iy[order], ix[order], 3] = 255
+        filled = layer.copy()
+        for shift_y in (-1, 0, 1):
+            for shift_x in (-1, 0, 1):
+                if shift_x or shift_y:
+                    filled[1:-1, 1:-1] = np.where(filled[1:-1, 1:-1, 3:4] == 0, layer[1 + shift_y:size - 1 + shift_y,
+                                                                                 1 + shift_x:size - 1 + shift_x], filled[1:-1, 1:-1])
+        canvas.paste(Image.fromarray(filled, "RGBA"), (0, 0))
+        pen = ImageDraw.Draw(canvas)
+    large.sort(key=lambda item: item[0])
+    for _, p0, p1, p2, tone in large:
+        pen.polygon([p0, p1, p2], fill=tone)
+    data = np.asarray(canvas, np.float32) / 255.0
+    covered = data[:, :, 3] > 0.5
+    edge = np.zeros_like(covered)
+    inner = covered[1:-1, 1:-1]
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            edge[1:-1, 1:-1] |= inner & ~covered[1 + dy:size - 1 + dy, 1 + dx:size - 1 + dx]
+    data[edge, :3] *= 0.55
+    return data[:, :, :3], covered
+
+
+def relief_field(pad):
+    if pad is None:
+        return None
     big = RELIEF_UP @ pad @ RELIEF_UP.T
-    big = big[64:64 + ADT_PX, 64:64 + ADT_PX]
-    gy, gx = np.gradient(big, CHUNK_YD / PPC)
+    return big[64:64 + ADT_PX, 64:64 + ADT_PX]
+
+
+def shaded_relief(heights, preset):
+    if preset["light"] is None or heights is None:
+        return np.ones((ADT_PX, ADT_PX), np.float32)
+    gy, gx = np.gradient(heights, CHUNK_YD / PPC)
     lx, ly, lz = preset["light"]
     norm = np.sqrt(gx * gx + gy * gy + 1.0)
     light_norm = math.sqrt(lx * lx + ly * ly + lz * lz)
@@ -340,6 +470,10 @@ class Renderer:
         self.textures = TextureCache(self.archives, caches["tex"], self.key)
         self.adts = caches["adt"]
         self.images = caches["img"]
+        self.wmo_roots = caches["wmo"]
+        self.wmo_groups = caches["wmogroup"]
+        self.wmo_colours = caches["wmocol"]
+        self.wmo_pixels = caches["wmopix"]
         self.tiles = {}
         self.probes = {}
         self.lock = threading.RLock()
@@ -378,6 +512,54 @@ class Renderer:
 
     def preload(self):
         self.archives.preload()
+
+    def wmo_root(self, name):
+        key = (self.key, name.lower())
+        hit = self.wmo_roots.get(key)
+        if hit is not MISSING:
+            return hit
+        data = self.archives.read(name)
+        root = wmomodel.parse_root(data) if data else None
+        self.wmo_roots.put(key, root)
+        return root
+
+    def wmo_group(self, name, index):
+        key = (self.key, name.lower(), index)
+        hit = self.wmo_groups.get(key)
+        if hit is not MISSING:
+            return hit
+        path = f"{name[:-4]}_{index:03d}.wmo" if name.lower().endswith(".wmo") else f"{name}_{index:03d}.wmo"
+        data = self.archives.read(path)
+        group = wmomodel.parse_group(data) if data else None
+        self.wmo_groups.put(key, group)
+        return group
+
+    def wmo_texture(self, texture):
+        key = (self.key, texture.lower())
+        hit = self.wmo_pixels.get(key)
+        if hit is not MISSING:
+            return hit
+        image = self.archives.image(texture) if texture else None
+        if image is None:
+            tile = np.full((32, 32, 3), 0.62, np.float32)
+        else:
+            tile = np.asarray(image.convert("RGB").resize((32, 32), Image.BILINEAR), np.float32) / 255.0
+        self.wmo_pixels.put(key, tile)
+        return tile
+
+    def wmo_colour(self, texture):
+        key = (self.key, texture.lower())
+        hit = self.wmo_colours.get(key)
+        if hit is not MISSING:
+            return hit
+        image = self.archives.image(texture) if texture else None
+        if image is None:
+            colour = (0.62, 0.60, 0.56)
+        else:
+            r, g, b = image.convert("RGB").resize((1, 1), Image.BOX).getpixel((0, 0))
+            colour = (r / 255.0, g / 255.0, b / 255.0)
+        self.wmo_colours.put(key, colour)
+        return colour
 
     def prefetch(self, directory, col, row):
         for dy in (-1, 0, 1):
@@ -423,10 +605,28 @@ class Renderer:
         if adt is None:
             return None
         preset = SHADING.get(shade) or SHADING["soft"]
-        pad = padded_heights(self, directory, col, row) if preset["light"] is not None else None
-        image = render_adt(adt, self.textures, preset, pad)
+        pad = padded_heights(self, directory, col, row)
+        buildings = None
+        placements = neighbour_placements(self, directory, col, row)
+        if placements:
+            left = GRID_YD - col * ADT_YD
+            top = GRID_YD - row * ADT_YD
+            drawn = draw_buildings(self, placements, left, top)
+            if drawn[1].any():
+                buildings = drawn
+        image = render_adt(adt, self.textures, preset, pad, buildings)
         self.images.put(key, image)
         return image
+
+
+def neighbour_placements(renderer, directory, col, row):
+    out = []
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            adt = renderer.adt(col + dx, row + dy, directory)
+            if adt is not None and adt.placements:
+                out.extend(adt.placements)
+    return out
 
 
 def padded_heights(renderer, directory, col, row):
@@ -602,6 +802,13 @@ class Terrain:
                        sizer=lambda a: int(a.bytes * 1.25) + 65536 if a else 256),
             "img": Lru(max_bytes=RENDER_MB * 1024 * 1024, sizer=lambda img: img.width * img.height * 4),
             "tex": Lru(max_bytes=TEXTURE_MB * 1024 * 1024, sizer=lambda a: a.nbytes),
+            "wmo": Lru(max_items=128, sizer=lambda root: 2048),
+            "wmogroup": Lru(max_bytes=WMO_MB * 1024 * 1024,
+                            sizer=lambda g: (g["verts"].nbytes + g["tris"].nbytes + g["mats"].nbytes
+                                             + (g["uvs"].nbytes if g["uvs"] is not None else 0)
+                                             + 4096) if g else 256),
+            "wmocol": Lru(max_items=2048, sizer=lambda c: 64),
+            "wmopix": Lru(max_bytes=8 * 1024 * 1024, sizer=lambda a: a.nbytes),
         }
         self.executor = self.new_executor()
 
@@ -802,7 +1009,8 @@ class Terrain:
                 "clients": clients, "version": RENDER_VERSION,
                 "ram": {"adt_mb": round(self.caches["adt"].bytes / 1048576, 1),
                         "render_mb": round(self.caches["img"].bytes / 1048576, 1),
-                        "tex_mb": round(self.caches["tex"].bytes / 1048576, 1)}}
+                        "tex_mb": round(self.caches["tex"].bytes / 1048576, 1),
+                        "wmo_mb": round(self.caches["wmogroup"].bytes / 1048576, 1)}}
 
     def set_value(self, key, value):
         if key.lower() in ("cache_mb", "render_workers"):
