@@ -56,7 +56,7 @@ create table if not exists favorites (
 """
 
 BUCKETS = ("bug", "fluke", "gap", "fixed")
-PREVIEW_VERSION = 2
+PREVIEW_VERSION = 3
 PREVIEW_COLUMNS = (("loc_map", "integer"), ("x", "real"), ("y", "real"), ("loc", "text"), ("v", "integer"))
 
 

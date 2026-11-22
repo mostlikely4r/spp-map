@@ -1063,7 +1063,7 @@ async function loadTests() {
     const tracked = r.loc === 'track';
     L.circleMarker(pos, { radius: 6, color: VERDICT_COLORS[r.verdict] || '#8395a7', weight: 3, fill: true, fillColor: '#0b0f14', fillOpacity: tracked ? 0.6 : 0.15,
       dashArray: tracked ? null : '3 3', renderer: W.renderer })
-      .bindTooltip(`${prettyTest(r.test)} \u00b7 ${r.verdict} \u00b7 ${r.ts.slice(5, 16)}${tracked ? '' : ' \u00b7 quest location, no track'}`)
+      .bindTooltip(`${prettyTest(r.test)} \u00b7 ${r.verdict} \u00b7 ${r.ts.slice(5, 16)}${tracked ? '' : r.loc === 'record' ? ' \u00b7 end position, no track' : ' \u00b7 quest location, no track'}`)
       .on('click', e => { L.DomEvent.stopPropagation(e); go(`/r/${r.id}`); })
       .addTo(layer);
   }
