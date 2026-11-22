@@ -1,0 +1,35 @@
+name: GitHub Pages (demo)
+
+on:
+  push:
+    branches: [main]
+    paths: ["demo/**", "livemap/static/**", "livemap/export.py", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Build the site from the bundled demo
+        run: python -m livemap site --src demo --out site --base "/${{ github.event.repository.name }}"
+      - name: Publish to the gh-pages branch
+        run: |
+          cd site
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Pages: demo built from ${GITHUB_SHA}"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages

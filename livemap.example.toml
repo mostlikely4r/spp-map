@@ -1,3 +1,6 @@
+# Copy to livemap.toml (or just run livemap: the setup page writes it for you).
+
+# SPP repack: logs, DBC files, databases and aiplayerbot.conf are found per core from here.
 spp_root = "C:/Games/SPP_Classics_V2/SPP_Server"
 
 [server]
@@ -5,6 +8,9 @@ host = "127.0.0.1"
 port = 8420
 data_dir = "data"
 require_token_local = false
+allow_remote_write = false
+# the online demo page may connect to this livemap (token always required, changes always off)
+pages_origin = "https://mostlikely4r.github.io"
 
 [map]
 keep_cache = false
@@ -25,3 +31,9 @@ client = "C:/Games/WoW-TBC/Data"
 [[core]]
 name = "wotlk"
 client = "C:/Games/WoW-WotLK/Data"
+
+# Any other CMaNGOS or vmangos server: mangosd.conf is enough (databases, logs, dbc, aiplayerbot.conf).
+# [[core]]
+# name = "vmangos"
+# mangosd_conf = "C:/vmangos/mangosd.conf"
+# client = "C:/Games/WoW-Classic/Data"

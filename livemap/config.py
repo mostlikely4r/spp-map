@@ -46,6 +46,7 @@ class Config:
     allow_remote_write: bool
     map: dict = field(default_factory=dict)
     cores: dict[str, Core] = field(default_factory=dict)
+    cors_origins: tuple = ()
 
     def core(self, name):
         if name not in self.cores:
@@ -136,6 +137,8 @@ def load(path):
         require_token_local=bool(server.get("require_token_local", False)),
         allow_remote_write=bool(server.get("allow_remote_write", False)),
         map=raw.get("map", {}),
+        cors_origins=tuple(o.rstrip("/") for o in ([server.get("pages_origin", "https://mostlikely4r.github.io")]
+                                                    + list(server.get("cors_origins", []))) if o),
     )
     spp_root = resolve(base, raw.get("spp_root", ""))
     for entry in raw.get("core", []):

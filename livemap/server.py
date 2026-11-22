@@ -29,7 +29,38 @@ class Handler(BaseHTTPRequestHandler):
 
     def is_remote(self):
         h = self.headers
-        return bool(h.get("Cf-Connecting-Ip") or h.get("X-Forwarded-For")) or self.client_address[0] not in ("127.0.0.1", "::1")
+        return bool(h.get("Cf-Connecting-Ip") or h.get("X-Forwarded-For")) or self.client_address[0] not in ("127.0.0.1", "::1") \
+            or self.cross_origin()
+
+    def cross_origin(self):
+        origin = self.headers.get("Origin")
+        if not origin or origin == "null":
+            return False
+        host = self.headers.get("Host", "")
+        return origin.split("://", 1)[-1] != host
+
+    def allowed_origin(self):
+        origin = (self.headers.get("Origin") or "").rstrip("/")
+        return origin if origin and origin in self.app.cfg.cors_origins else None
+
+    def end_headers(self):
+        origin = self.allowed_origin()
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        origin = self.allowed_origin()
+        self.send_response(204 if origin else 403)
+        if origin:
+            self.send_header("Access-Control-Allow-Methods", "GET")
+            self.send_header("Access-Control-Allow-Headers", "X-Livemap-Token")
+            self.send_header("Access-Control-Max-Age", "600")
+            if self.headers.get("Access-Control-Request-Private-Network"):
+                self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def cookie_token(self):
         for part in (self.headers.get("Cookie") or "").split(";"):
@@ -56,7 +87,7 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
         try:
-            if query.get("token") and self.authorized(query):
+            if query.get("token") and method == "GET" and PAGE_ROUTES.match(path) and self.authorized(query):
                 clean = parsed.path + ("?" + "&".join(f"{k}={quote(v)}" for k, v in query.items() if k != "token")
                                        if len(query) > 1 else "")
                 self.send_response(302)
@@ -112,6 +143,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def api(self, method, name, q):
         app, cat = self.app, self.app.catalog
+        if method != "GET" and self.cross_origin():
+            return self.send_json({"error": "changes are not allowed from another site; open livemap itself to change things"}, 403)
         if method == "GET" and name == "summary":
             return self.send_json({
                 "summary": cat.summary(),
