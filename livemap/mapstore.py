@@ -9,7 +9,7 @@ DEFAULTS = {
     "shading": "soft",
     "render_workers": "2",
     "fallback": "1",
-    "fallback_order": "tbc,vanilla",
+    "fallback_order": "tbc,vanilla,wotlk",
 }
 
 BOOL_KEYS = ("keep_cache", "fallback")

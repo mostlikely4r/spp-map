@@ -148,7 +148,7 @@ the same (`data/access_token.txt`; delete it to issue a new one).
 ## Ground (terrain) layer
 
 `livemap/adtrender.py` renders the ground on demand, per 533 yd ADT tile, from the client's
-`World\Maps\<map>\<map>_<x>_<y>.adt` (vanilla and TBC formats; WotLK needs the R3 work).
+`World\Maps\<map>\<map>_<x>_<y>.adt` (vanilla, TBC and WotLK formats).
 
 - **Tile endpoint:** `GET /tiles/<core>/adt/<map>/<z>/<x>/<y>.webp?shade=<soft|medium|strong|flat>`.
   The grid follows the viewer's CRS exactly: at `z=1` one ADT is 4x4 tiles of 256 px (0.52 yd/px),
@@ -167,9 +167,12 @@ the same (`data/access_token.txt`; delete it to issue a new one).
   the RAM caches and the MPQ archives instead of paying the ~5 s archive open per process. Duplicate
   requests for the same `(client, map, ADT, shade)` share one future.
 - **Fallback (per map):** when the viewed core has no client, or its client has no terrain for that
-  map, another core's client renders it (order in Settings, default `tbc, vanilla`). The map shows
-  "terrain: rendered from the <core> client" and the disk cache keeps those tiles apart. A core whose
-  client DBC has map 571 (Northrend) is treated as WotLK and is not used for terrain until R3.
+  map, another core's client renders it (order in Settings, default `tbc, vanilla, wotlk`). The map shows
+  "terrain: rendered from the <core> client" and the disk cache keeps those tiles apart.
+- **WotLK (R3):** 8-bit alpha maps (WDT `MPHD` big-alpha flag) and RLE-compressed alpha layers
+  (`MCLY` flag 0x200), `MH2O` liquids (water, ocean, magma, slime from `LiquidType.dbc`, height grid
+  and exists bitmap; ocean is flat at its minimum height) and `MCCV` vertex colours as a tint. Northrend
+  and Dalaran render from the wotlk client itself.
 - **Buildings (R2):** each ADT's `MODF` placements are read (and taken from the eight neighbouring
   ADTs too, so a building that crosses a tile edge is complete; the client repeats the same record in
   every ADT it touches, so they are de-duplicated). For each placed WMO the root (materials, group
@@ -177,8 +180,7 @@ the same (`data/access_token.txt`; delete it to issue a new one).
   triangles are projected top-down: bounding-box culling per placement and group, up-facing and
   area filters per triangle, big triangles filled in depth order, small ones splatted and dilated,
   colour sampled from the material texture at the triangle's UV. Roofs get a slope shade and the
-  silhouette a dark outline so a town reads at a glance. Trees, doodads and M2 props are still R4;
-  WotLK formats are still R3.
+  silhouette a dark outline so a town reads at a glance. Trees, doodads and M2 props are still R4.
 - **Settings** (`/settings`, section "Map", stored in `data/livemap.sqlite`): keep cache on/off, cache
   size cap with current usage, delete the saved cache (all cores or one), default shading, render
   workers, fallback on/off and order, and the client `Data` folder per core with a check button
@@ -203,7 +205,7 @@ the same (`data/access_token.txt`; delete it to issue a new one).
 | History across restarts | `AiPlayerbot.LogArchiveOnBoot = 1` (old logs are renamed `<name>_<YYYYmmdd_HHMMSS>.csv` instead of wiped; `LogArchiveKeepBoots` limits how many). Toggle it on the Settings page |
 | Instance positions (old builds) | `map_offsets.csv`, `livemap_manifest.json` in `AiPlayerbot.AllowedLogFiles` |
 | Painted maps | the game client's `Data` folder |
-| Rendered ground | the same client `Data` folder (vanilla or TBC client; WotLK from R3) |
+| Rendered ground | the same client `Data` folder (vanilla, TBC or WotLK client) |
 
 The map art comes from your own client and is built locally; this repository does not ship
 Blizzard art.

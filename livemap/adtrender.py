@@ -22,7 +22,7 @@ REPEATS = 8
 TILE_PX = 256
 MIN_LEVEL = -1
 MAX_LEVEL = 1
-RENDER_VERSION = 4
+RENDER_VERSION = 5
 CHUNK_YD = ADT_YD / 16
 APRON_PX = ADT_PX + 128
 
@@ -113,7 +113,7 @@ def subchunks(data, start, end):
 
 
 class Chunk:
-    __slots__ = ("ix", "iy", "heights", "layers", "shadow", "holes", "liquid")
+    __slots__ = ("ix", "iy", "heights", "layers", "shadow", "holes", "liquid", "tint")
 
 
 class Adt:
@@ -159,8 +159,9 @@ def cubic_matrix(n_in, n_out, scale):
 RELIEF_UP = cubic_matrix(145, APRON_PX, 8.0)
 
 
-def parse_adt(data, col, row):
+def parse_adt(data, col, row, big_alpha=False, liquid_kinds=None):
     top = subchunks(data, 0, len(data))
+    mh2o = parse_mh2o(data, top["MH2O"][0], liquid_kinds or {}) if "MH2O" in top else {}
     mtex = top.get("MTEX")
     if not mtex:
         return None
@@ -175,9 +176,11 @@ def parse_adt(data, col, row):
     hf = np.zeros((129, 129), np.float32)
     for mcnk_offset, mcnk_size in top.get("MCNK", []):
         base = mcnk_offset - 8
-        chunk = parse_chunk(data, base, mcnk_offset, textures)
+        chunk = parse_chunk(data, base, mcnk_offset, textures, big_alpha)
         if chunk is None:
             continue
+        if chunk.liquid is None:
+            chunk.liquid = mh2o.get((chunk.ix, chunk.iy))
         adt.chunks.append(chunk)
         h = chunk.heights
         outer = np.concatenate([h[r * 17:r * 17 + 9] for r in range(9)]).reshape(9, 9)
@@ -193,12 +196,13 @@ def parse_adt(data, col, row):
     return adt
 
 
-def parse_chunk(data, base, offset, textures):
+def parse_chunk(data, base, offset, textures, big_alpha=False):
     try:
         (flags, ix, iy, nlayers, _, ofs_h, ofs_n, ofs_l, _, ofs_a, size_a, ofs_s, size_s,
          area, _, holes) = struct.unpack_from("<15IH", data, offset)
         ofs_liq, size_liq = struct.unpack_from("<2I", data, offset + 96)
         pos = struct.unpack_from("<3f", data, offset + 104)
+        ofs_cv = struct.unpack_from("<I", data, offset + 116)[0]
     except struct.error:
         return None
     if ix > 15 or iy > 15 or nlayers > 8:
@@ -222,7 +226,8 @@ def parse_chunk(data, base, offset, textures):
             break
         if tex >= len(textures):
             continue
-        alpha = read_alpha(data, base + ofs_a + 8, aofs, flags & 0x8000) if k else None
+        mode = "rle" if lflags & 0x200 else "big" if big_alpha else "small"
+        alpha = read_alpha(data, base + ofs_a + 8, aofs, flags & 0x8000, mode) if k else None
         if k and alpha is None:
             continue
         layers.append((tex, alpha))
@@ -232,10 +237,77 @@ def parse_chunk(data, base, offset, textures):
         bits = np.unpackbits(np.frombuffer(data, np.uint8, 512, base + ofs_s + 8), bitorder="little")
         chunk.shadow = (bits.reshape(64, 64) * 255).astype(np.uint8)
     chunk.liquid = parse_liquid(data, base + ofs_liq + 8, flags) if size_liq and flags & 0x3C else None
+    chunk.tint = read_tint(data, base + ofs_cv + 8) if flags & 0x40 and ofs_cv else None
     return chunk
 
 
-def read_alpha(data, base, aofs, big):
+def read_tint(data, start):
+    try:
+        raw = np.frombuffer(data, np.uint8, 145 * 4, start).reshape(145, 4)
+    except ValueError:
+        return None
+    outer = np.concatenate([raw[r * 17:r * 17 + 9] for r in range(9)]).reshape(9, 9, 4)
+    tint = outer[:, :, [2, 1, 0]].astype(np.float32) / 127.0
+    if np.allclose(tint, 1.0, atol=0.02):
+        return None
+    return np.clip(tint, 0.0, 2.0)
+
+
+def parse_mh2o(data, chunk, kinds):
+    start, size = chunk
+    out = {}
+    try:
+        for index in range(256):
+            ofs_inst, n_layers, _ = struct.unpack_from("<3I", data, start + index * 12)
+            if not n_layers or not ofs_inst:
+                continue
+            (ltype, _, lo, hi, xo, yo, w, h, ofs_bits, ofs_verts) = struct.unpack_from("<2H2f4B2I", data, start + ofs_inst)
+            if w == 0 or h == 0 or xo + w > 8 or yo + h > 8:
+                continue
+            show = np.zeros((8, 8), bool)
+            if ofs_bits:
+                bits = np.unpackbits(np.frombuffer(data, np.uint8, (w * h + 7) // 8, start + ofs_bits), bitorder="little")[:w * h]
+                show[yo:yo + h, xo:xo + w] = bits.reshape(h, w).astype(bool)
+            else:
+                show[yo:yo + h, xo:xo + w] = True
+            height = np.full((9, 9), lo, np.float32)
+            n = (w + 1) * (h + 1)
+            kind = {0: "water", 1: "ocean", 2: "magma", 3: "slime"}.get(kinds.get(ltype, 0), "water")
+            if ofs_verts and kind != "ocean":
+                level = np.frombuffer(data, "<f4", n, start + ofs_verts).reshape(h + 1, w + 1)
+                height[yo:yo + h + 1, xo:xo + w + 1] = level
+            out[(index % 16, index // 16)] = {"height": height, "show": show, "kind": kind}
+    except (struct.error, ValueError):
+        return out
+    return out
+
+
+def read_alpha(data, base, aofs, big, mode="small"):
+    if mode == "rle":
+        out = bytearray()
+        i = base + aofs
+        end = len(data)
+        while len(out) < 4096 and i < end:
+            head = data[i]
+            i += 1
+            count = head & 0x7F
+            if head & 0x80:
+                if i >= end:
+                    break
+                out += bytes([data[i]]) * count
+                i += 1
+            else:
+                out += data[i:i + count]
+                i += count
+        if len(out) < 4096:
+            return None
+        return np.frombuffer(bytes(out[:4096]), np.uint8).reshape(64, 64).copy()
+    if mode == "big":
+        try:
+            raw = np.frombuffer(data, np.uint8, 4096, base + aofs)
+        except ValueError:
+            return None
+        return raw.reshape(64, 64).copy()
     try:
         raw = np.frombuffer(data, np.uint8, 2048, base + aofs)
     except ValueError:
@@ -302,6 +374,8 @@ def render_adt(adt, textures, preset, pad, buildings=None):
         for tex, blend in chunk.layers[1:]:
             weight = blend.astype(np.float32)[..., None] * (1.0 / 255.0)
             colour = colour * (1.0 - weight) + textures.tiled(adt.textures[tex]) * weight
+        if chunk.tint is not None:
+            colour = colour * np.stack([HEIGHT_UP @ chunk.tint[:, :, c] @ HEIGHT_UP.T for c in range(3)], axis=-1)
         if chunk.shadow is not None and darken > 0:
             shadow = chunk.shadow.astype(np.float32) * (1.0 / 255.0)
             colour = colour * (1.0 - darken * shadow)[..., None]
@@ -524,6 +598,8 @@ class Renderer:
         self.tiles = {}
         self.probes = {}
         self.globals = {}
+        self.flags = {}
+        self._liquids = None
         self.lock = threading.RLock()
         self._map_dirs = None
 
@@ -544,7 +620,32 @@ class Renderer:
         return self.map_dirs().get(int(map_id)) or None
 
     def supported(self):
-        return 571 not in self.map_dirs()
+        return True
+
+    def wdt_flags(self, directory):
+        with self.lock:
+            if directory in self.flags:
+                return self.flags[directory]
+        flags = 0
+        wdt = self.archives.read(f"World\\Maps\\{directory}\\{directory}.wdt")
+        if wdt:
+            parts = subchunks(wdt, 0, len(wdt))
+            if "MPHD" in parts:
+                flags = struct.unpack_from("<I", wdt, parts["MPHD"][0][0])[0]
+        with self.lock:
+            self.flags[directory] = flags
+        return flags
+
+    def liquid_kinds(self):
+        if self._liquids is None:
+            kinds = {}
+            try:
+                recs, _ = read_dbc(os.path.join(self.dbc_dir, "LiquidType.dbc"))
+                kinds = {r[0]: r[3] for r in recs if len(r) > 3 and 0 <= r[3] <= 3}
+            except (OSError, IndexError, ValueError):
+                kinds = {}
+            self._liquids = kinds
+        return self._liquids
 
     def adt(self, col, row, directory):
         key = (self.key, directory, col, row)
@@ -552,7 +653,7 @@ class Renderer:
         if hit is not MISSING:
             return hit
         data = self.archives.read(self.adt_path(col, row, directory))
-        adt = parse_adt(data, col, row) if data else None
+        adt = parse_adt(data, col, row, bool(self.wdt_flags(directory) & 0x84), self.liquid_kinds()) if data else None
         if adt is not None and not adt.valid:
             adt = None
         self.adts.put(key, adt)
