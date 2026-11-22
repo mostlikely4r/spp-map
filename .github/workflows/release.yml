@@ -1,0 +1,32 @@
+name: Windows release zip
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the portable zip (embedded Python 3.12.10 + wheels)
+        run: python tools/build_zip.py --python 3.12.10 --version "${GITHUB_REF_NAME}"
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" \
+            --notes "Portable Windows build: unzip anywhere and double-click livemap.cmd (or livemap_demo.cmd). Embedded Python 3.12.10 from python.org."
+          gh release upload "$GITHUB_REF_NAME" dist/*.zip --clobber
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spp-livemap-win64
+          path: dist/*.zip

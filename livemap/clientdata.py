@@ -139,7 +139,7 @@ def client_dbc(client, locale, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     found = 0
     for name in CLIENT_DBCS:
-        data = archives.read(f"DBFilesClient\{name}.dbc")
+        data = archives.read("DBFilesClient\\" + name + ".dbc")
         if not data:
             continue
         tmp = os.path.join(out_dir, name + ".dbc.tmp")

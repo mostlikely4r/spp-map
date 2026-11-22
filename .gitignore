@@ -4,3 +4,5 @@ data/
 livemap.toml
 __pycache__/
 *.pyc
+dist/
+site/
