@@ -237,7 +237,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             query = parse_qs(urlparse(self.path).query)
             data = self.app.terrain.tile(core, int(map_id), int(z), int(x), int(y), query.get("shade", [None])[0],
-                                         {"0": "off", "2": "inside"}.get(query.get("bld", ["1"])[0], "roofs"))
+                                         {"0": "off", "2": "inside"}.get(query.get("bld", ["1"])[0], "roofs"),
+                                         int(query["cut"][0]) if query.get("cut", [""])[0].lstrip("-").isdigit() else None)
         except (TypeError, ValueError):
             return self.send_text(404, "bad tile path")
         if not data:

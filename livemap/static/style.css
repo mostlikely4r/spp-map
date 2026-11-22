@@ -118,3 +118,4 @@ button.on { outline: 2px solid var(--accent); }
 .wcluster { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; max-width: 320px; transform: translate(-50%, -50%);
   background: rgba(17,19,23,.8); border-radius: 12px; padding: 4px 6px; }
 .wcluster .chip { font-size: 11px; padding: 2px 8px; }
+.wheight { width: 100%; accent-color: var(--accent); margin: 4px 0; }

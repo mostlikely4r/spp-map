@@ -47,6 +47,8 @@ SHADING = {
 SHADE_NAMES = ("soft", "medium", "strong", "flat")
 NO_BUILDINGS = "-nobld"
 INSIDE = "-inside"
+VARIANT = re.compile(r"^([a-z]+)(-nobld|-inside)?(?:-cut(-?\d+))?$")
+WMO_MIN_LEVEL = -4
 INTERIOR_GROUP = 0x2000
 INSIDE_LIFT = 4096.0
 
@@ -339,7 +341,17 @@ def render_adt(adt, textures, preset, pad, buildings=None):
     return Image.fromarray(out, "RGBA")
 
 
-def draw_buildings(renderer, placements, left, top, inside=False):
+def render_wmo_only(renderer, placements, left, top, inside, cut):
+    rgb, covered = draw_buildings(renderer, placements, left, top, inside, cut)
+    if not covered.any():
+        return None
+    out = np.zeros((ADT_PX, ADT_PX, 4), np.uint8)
+    out[:, :, :3] = np.clip(rgb * 255.0, 0, 255).astype(np.uint8)
+    out[:, :, 3] = np.where(covered, 255, 0).astype(np.uint8)
+    return Image.fromarray(out, "RGBA")
+
+
+def draw_buildings(renderer, placements, left, top, inside=False, cut=None):
     yard_px = CHUNK_YD / PPC
     size = ADT_PX
     zbuf = np.full(size * size, -np.inf, np.float32)
@@ -377,6 +389,8 @@ def draw_buildings(renderer, placements, left, top, inside=False):
             normal = np.cross(e1, e2)
             upness = normal[:, 2] * BUILD_FACING / (np.linalg.norm(normal, axis=1) + 1e-6)
             keep = (mats != 255) & (upness > BUILD_MIN_UP)
+            if cut is not None:
+                keep &= (wz[a] + wz[b] + wz[c]) / 3.0 <= cut
             keep &= (np.maximum(np.maximum(px[a], px[b]), px[c]) >= 0) & (np.minimum(np.minimum(px[a], px[b]), px[c]) <= size)
             keep &= (np.maximum(np.maximum(py[a], py[b]), py[c]) >= 0) & (np.minimum(np.minimum(py[a], py[b]), py[c]) <= size)
             if not keep.any():
@@ -507,6 +521,7 @@ class Renderer:
         self.wmo_pixels = caches["wmopix"]
         self.tiles = {}
         self.probes = {}
+        self.globals = {}
         self.lock = threading.RLock()
         self._map_dirs = None
 
@@ -624,8 +639,42 @@ class Renderer:
         if tile:
             adt = self.adt(tile[0], tile[1], directory)
             ok = adt is not None and bool(adt.textures)
+        if not ok and self.global_wmo(directory):
+            ok = True
         self.probes[directory] = ok
         return ok
+
+    def global_wmo(self, directory):
+        with self.lock:
+            if directory in self.globals:
+                return self.globals[directory]
+        wdt = self.archives.read(f"World\\Maps\\{directory}\\{directory}.wdt")
+        found = []
+        if wdt:
+            for uid, name, pos, rot, scale in wmomodel.adt_placements(wdt):
+                found.append((uid, name, (pos[0] + GRID_YD, pos[1], pos[2] + GRID_YD), rot, scale))
+        with self.lock:
+            self.globals[directory] = found
+        return found
+
+    def wmo_extent(self, directory):
+        placements = self.global_wmo(directory)
+        if not placements:
+            return None
+        xs, ys, zs = [], [], []
+        for uid, name, position, rotation, scale in placements:
+            root = self.wmo_root(name)
+            if root is None:
+                continue
+            lo, hi = root["bbox"]
+            corners = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])], np.float32)
+            wx, wy, wz = wmomodel.transform(corners, position, rotation, scale)
+            xs += [float(wx.min()), float(wx.max())]
+            ys += [float(wy.min()), float(wy.max())]
+            zs += [float(wz.min()), float(wz.max())]
+        if not zs:
+            return None
+        return {"top": max(xs), "bottom": min(xs), "left": max(ys), "right": min(ys), "zmin": min(zs), "zmax": max(zs)}
 
     def image(self, directory, col, row, shade):
         key = (self.key, directory, col, row, shade)
@@ -633,19 +682,24 @@ class Renderer:
         if hit is not MISSING:
             return hit
         adt = self.adt(col, row, directory)
-        if adt is None:
+        if adt is None and not self.global_wmo(directory):
             return None
-        bare = shade.endswith(NO_BUILDINGS)
-        inside = shade.endswith(INSIDE)
-        base = shade[:-len(NO_BUILDINGS)] if bare else shade[:-len(INSIDE)] if inside else shade
-        preset = SHADING.get(base) or SHADING["soft"]
+        m = VARIANT.match(shade) or VARIANT.match("soft")
+        bare = m.group(2) == NO_BUILDINGS
+        inside = m.group(2) == INSIDE
+        cut = float(m.group(3)) if m.group(3) is not None else None
+        left = GRID_YD - col * ADT_YD
+        top = GRID_YD - row * ADT_YD
+        if adt is None:
+            image = render_wmo_only(self, self.global_wmo(directory), left, top, inside, cut)
+            self.images.put(key, image)
+            return image
+        preset = SHADING.get(m.group(1)) or SHADING["soft"]
         pad = padded_heights(self, directory, col, row)
         buildings = None
         placements = None if bare else neighbour_placements(self, directory, col, row)
         if placements:
-            left = GRID_YD - col * ADT_YD
-            top = GRID_YD - row * ADT_YD
-            drawn = draw_buildings(self, placements, left, top, inside)
+            drawn = draw_buildings(self, placements, left, top, inside, cut)
             if drawn[1].any():
                 buildings = drawn
         image = render_adt(adt, self.textures, preset, pad, buildings)
@@ -944,8 +998,12 @@ class Terrain:
         if not info:
             return base
         self.warm(info)
-        return dict(base, available=True, source=info["core"], fallback=info["fallback"],
-                    directory=info["directory"])
+        out = dict(base, available=True, source=info["core"], fallback=info["fallback"], directory=info["directory"])
+        renderer = info["renderer"]
+        if renderer.first_tile(info["directory"]) is None and renderer.global_wmo(info["directory"]):
+            extent = renderer.wmo_extent(info["directory"])
+            out.update(wmo=True, show_from=WMO_MIN_LEVEL, extent=extent)
+        return out
 
     def warm(self, info):
         key = (info["core"], info["directory"], self.store.shade())
@@ -1003,7 +1061,7 @@ class Terrain:
             threading.Thread(target=renderer.prefetch, args=(job[2], job[3], job[4]),
                              daemon=True, name="adt-prefetch").start()
 
-    def tile(self, core_name, map_id, z, x, y, shade=None, buildings="roofs"):
+    def tile(self, core_name, map_id, z, x, y, shade=None, buildings="roofs", cut=None):
         grabbed = tile_coords(int(z), int(x), int(y))
         if grabbed is None or core_name not in self.cfg.cores:
             return None
@@ -1016,6 +1074,8 @@ class Terrain:
             shade += NO_BUILDINGS
         elif buildings == "inside":
             shade += INSIDE
+        if cut is not None:
+            shade += f"-cut{int(cut)}"
         image = self.image(core_name, info, shade, col, row)
         if image is None:
             return None

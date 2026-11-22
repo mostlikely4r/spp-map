@@ -104,7 +104,7 @@ function stopWorld() {
   W.timer = W.slowTimer = null;
   W.markers.clear(); W.selected = null; W.trail = null; W.layers = null; W.fitted = false; W.viewApplied = false;
   W.zoneLabels = null; W.zoneLevels = null; W.place = null; W.ov = null; W.inst = []; W.top = {}; W.counts = {};
-  W.sceneGround = null; W.scene = false; W.focus = null; W.map = null; W.cont = {}; W.base0 = [0, 0]; W.mapSig = null;
+  W.cut = null; W.sceneGround = null; W.scene = false; W.focus = null; W.map = null; W.cont = {}; W.base0 = [0, 0]; W.mapSig = null;
   document.body.classList.remove('worldmode');
 }
 
@@ -166,6 +166,8 @@ async function worldPage(core, mapId) {
   const first = await wapi('live' + (core ? '?core=' + encodeURIComponent(core) : ''));
   W.core = first.core;
   const artParam = new URLSearchParams(location.search).get('art');
+  const cutParam = new URLSearchParams(location.search).get('cut');
+  W.cut = cutParam !== null && cutParam !== '' && !isNaN(cutParam) ? +cutParam : null;
   W.art = artParam === null ? (store('wart') === 'minimap' ? 'minimap' : 'painted') : (artParam === 'minimap' ? 'minimap' : 'painted');
   if (mapId === null || mapId === undefined || (mapId !== 'world' && isNaN(mapId))) mapId = 'world';
   W.map = mapId;
@@ -278,7 +280,9 @@ async function worldPage(core, mapId) {
   W.renderer = L.canvas({ padding: 0.3 });
   drawBase();
   W.terrain = mountTerrain(mapObj, W.core, W.map, terrainInfo(),
-    () => (W.base && W.base.bounds ? imgBounds(W.base.bounds) : null), { chips: terrainRow, tag: terrainTag, allow: () => W.art === 'minimap' });
+    () => (terrainInfo().wmo && terrainInfo().extent ? imgBounds(terrainInfo().extent) : W.base && W.base.bounds ? imgBounds(W.base.bounds) : null),
+    { chips: terrainRow, tag: terrainTag, allow: () => W.art === 'minimap',
+      onInfo: fresh => { if (W.info) W.info.terrain_render = fresh; drawBase(); renderStyle(); } });
   renderStyle();
   for (const [key, label] of [['bots', 'bots'], ['names', 'names'], ['labels', worldScene() ? 'zone + map names' : 'zone names'], ['zonelv', 'zone levels'], ['events', 'deaths / quests / levels'],
     ['intents', 'travel intent'], ['npcs', 'NPCs'], ['objects', 'objects'], ['nodes', 'travel nodes'], ['tele', 'teleport cache']]) {
@@ -345,7 +349,36 @@ function renderStyle() {
   box.append(opts);
   if (mm && p.detailed)
     box.append(el('div', { class: 'chips' }, TERRAIN_SHADES.map(n => chip(n, p.shade === n, () => { store('wshade', n); groundChanged(); }, 'terrain shading'))));
+  const info = terrainInfo();
+  if (mm && p.detailed && info.wmo && info.extent) box.append(heightSlider(info.extent));
   if (W.ui.sceneBlock) W.ui.sceneBlock.classList.toggle('hidden', !(worldScene() && mm && W.on.dungeons));
+}
+
+function heightSlider(ext) {
+  const lo = Math.floor(ext.zmin), hi = Math.ceil(ext.zmax) + 1;
+  const value = W.cut === null ? hi : Math.max(lo, Math.min(hi, W.cut));
+  const label = el('span', { class: 'meta' });
+  const show = v => { label.textContent = v >= hi ? 'all levels' : `up to height ${v}`; };
+  const input = el('input', { type: 'range', min: lo, max: hi, step: 2, value, class: 'wheight' });
+  input.addEventListener('input', () => show(+input.value));
+  input.addEventListener('change', () => setCut(+input.value >= hi ? null : +input.value));
+  show(value);
+  const bot = W.selected && W.markers.get(W.selected);
+  const here = bot && bot.row ? Math.round(col(bot.row, 'z')) + 6 : null;
+  return el('div', { class: 'wdsec' }, el('div', { class: 'wdtitle' }, 'Level (cut away everything above)'), input,
+    el('div', { class: 'chips' }, label,
+      el('span', { class: 'chip', onclick: () => setCut(null) }, 'all levels'),
+      here !== null ? el('span', { class: 'chip', onclick: () => setCut(here) }, 'level of the selected bot') : null));
+}
+
+function setCut(v) {
+  W.cut = v === null ? null : Math.round(v);
+  const u = new URL(location.href);
+  if (W.cut === null) u.searchParams.delete('cut'); else u.searchParams.set('cut', W.cut);
+  history.replaceState({}, '', u.pathname + u.search);
+  renderStyle();
+  if (W.terrain) W.terrain.sync();
+  redrawBots();
 }
 
 function toggleOption(key) {
@@ -358,6 +391,7 @@ function toggleOption(key) {
 
 function groundChanged() {
   renderStyle();
+  if (!worldScene()) drawBase();
   if (W.terrain) W.terrain.sync();
   syncSceneGround(true);
 }
@@ -444,12 +478,13 @@ function terrainPrefs(info) {
   let shade = store('wshade');
   if (!TERRAIN_SHADES.includes(shade)) shade = TERRAIN_SHADES.includes(spec.shade) ? spec.shade : 'soft';
   const detailed = store('wdetail');
-  return { shade, detailed: detailed === null || detailed === undefined ? true : detailed === '1', bld: ['0', '1', '2'].includes(store('wbld')) ? store('wbld') : '1' };
+  return { shade, detailed: detailed === null || detailed === undefined ? true : detailed === '1', bld: ['0', '1', '2'].includes(store('wbld')) ? store('wbld') : '1',
+    cut: spec.wmo && W.map !== null && W.cut !== null && W.cut !== undefined ? W.cut : null };
 }
 
-function terrainKey(prefs) { return prefs.shade + '-' + prefs.bld; }
+function terrainKey(prefs) { return prefs.shade + '-' + prefs.bld + '-' + prefs.cut; }
 
-function bldParam(prefs) { return prefs.bld === '1' ? '' : '&bld=' + prefs.bld; }
+function bldParam(prefs) { return (prefs.bld === '1' ? '' : '&bld=' + prefs.bld) + (prefs.cut === null || prefs.cut === undefined ? '' : '&cut=' + prefs.cut); }
 
 function terrainUrl(core, mapId, info, prefs) {
   return `/tiles/${core}/adt/${mapId}/{z}/{x}/{y}.webp?v=${info.version}&shade=${prefs.shade}${bldParam(prefs)}`;
@@ -502,6 +537,7 @@ function mountTerrain(map, core, mapId, info, boundsOf, ui) {
         if (fresh && !fresh.pending) {
           state.info = fresh;
           fillTerrainChips(ui.chips, fresh, sync);
+          if (ui.onInfo) ui.onInfo(fresh);
           sync();
           return;
         }
@@ -523,10 +559,11 @@ function mountTerrain(map, core, mapId, info, boundsOf, ui) {
       state.layer = null;
     }
     if (state.layer && state.layer.lmKey !== terrainKey(prefs)) {
-      state.layer.setUrl(terrainUrl(core, mapId, info, prefs));
-      state.layer.lmKey = terrainKey(prefs);
+      map.removeLayer(state.layer);
+      state.layer = null;
     }
-    const want = prefs.detailed && (!ui.allow || ui.allow()) && map.getZoom() >= info.min_zoom;
+    const from = info.show_from !== undefined ? info.show_from : info.min_zoom;
+    const want = prefs.detailed && (!ui.allow || ui.allow()) && map.getZoom() >= from;
     if (want && !state.layer) {
       state.bounds = bounds;
       state.layer = terrainLayerFor(info, core, mapId, prefs, bounds, map).addTo(map);
@@ -752,13 +789,14 @@ function drawBase() {
   W.floor = W.floor && floors.some(f => f.floor === W.floor) ? W.floor : (floors[0] && floors[0].floor);
   let base = null;
   if (W.art === 'minimap') base = wmo || terrain;
+  const geometry = W.art === 'minimap' && terrainInfo().wmo && terrainPrefs().detailed;
   if (!base && W.art !== 'minimap') base = continent;
   if (!base && floors.length) base = floors.find(f => f.floor === W.floor);
   if (!base && zones.length) base = zones.slice().sort((a, b) => area(b.bounds) - area(a.bounds))[0];
   if (!base) base = wmo || terrain;
   W.base = base;
   if (base) {
-    L.imageOverlay(`/basemap/${W.core}/${base.key}.webp`, imgBounds(base.bounds), { pane: 'baseimg' }).addTo(W.layers.base);
+    if (!geometry) L.imageOverlay(`/basemap/${W.core}/${base.key}.webp`, imgBounds(base.bounds), { pane: 'baseimg' }).addTo(W.layers.base);
     if (!W.fitted) { mapObj.fitBounds(imgBounds(base.bounds)); W.fitted = true; }
   } else if (!W.fitted && W.info.extent) { mapObj.fitBounds(imgBounds(W.info.extent)); W.fitted = true; }
   else if (!W.fitted) mapObj.setView([0, 0], -3);
@@ -930,7 +968,7 @@ function redrawBots() {
     if (!passesFilter(r)) continue;
     seen.add(guid);
     const player = !col(r, 'bot');
-    const offFloor = multiFloor && col(r, 'floor') !== null && col(r, 'floor') !== W.floor;
+    const offFloor = (multiFloor && col(r, 'floor') !== null && col(r, 'floor') !== W.floor) || (W.cut !== null && col(r, 'z') > W.cut + 2);
     const style = { radius: player ? 6 : 4, color: player ? '#fff' : '#000', weight: player ? 2 : 1, fillColor: botColor(r),
       fillOpacity: offFloor ? 0.25 : 0.95, opacity: offFloor ? 0.3 : 1, renderer: W.renderer };
     let m = W.markers.get(guid);

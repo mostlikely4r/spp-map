@@ -24,6 +24,11 @@ What works today:
 - **Test explorer.** Every `[BOTTEST]` result from every boot and every core goes into one small
   database: latest verdict, run history, pass rate, **"flipped to PASS"** and **regression** feeds,
   failures grouped by message, and a triage label per test (bug / fluke / gap / fixed + note).
+- **Dungeons drawn from their geometry.** Instances that are one big world model (Gnomeregan, most
+  classic dungeons) are rendered from the model itself in minimap mode, with full coverage instead of
+  the patchy client minimap pieces, at every zoom. A **level** slider cuts away everything above a
+  height so stacked levels can be read one at a time (bots above the cut are dimmed; `cut=<z>` in the
+  link and in the tile request).
 - **Map badge in the test list.** Each test shows whether its latest run has position data to plot
   (`map` / `no map`), with filters for both. The check runs once per run in the background (newest
   first) and is stored in the catalog (`previews` table).
