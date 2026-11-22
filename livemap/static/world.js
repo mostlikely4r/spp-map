@@ -89,7 +89,15 @@ function paintedContinent(id) {
 
 function wSaveLayers() { store('wlayers', JSON.stringify(W.on)); }
 
+async function wapi(path, opts) {
+  const gen = W.gen;
+  const data = await api(path, opts);
+  if (gen !== W.gen) return new Promise(() => {});
+  return data;
+}
+
 function stopWorld() {
+  W.gen = (W.gen || 0) + 1;
   clearInterval(W.timer); clearInterval(W.slowTimer);
   W.timer = W.slowTimer = null;
   W.markers.clear(); W.selected = null; W.trail = null; W.layers = null; W.fitted = false; W.viewApplied = false;
@@ -153,7 +161,7 @@ async function worldPage(core, mapId) {
   if (lp !== null) { const want = new Set(lp.split(',')); for (const k of Object.keys(W.on)) W.on[k] = want.has(k); }
   document.body.classList.add('worldmode');
   view.textContent = '';
-  const first = await api('live' + (core ? '?core=' + encodeURIComponent(core) : ''));
+  const first = await wapi('live' + (core ? '?core=' + encodeURIComponent(core) : ''));
   W.core = first.core;
   const artParam = new URLSearchParams(location.search).get('art');
   W.art = artParam === null ? (store('wart') === 'minimap' ? 'minimap' : 'painted') : (artParam === 'minimap' ? 'minimap' : 'painted');
@@ -165,17 +173,17 @@ async function worldPage(core, mapId) {
   W.placeMode = mode === 'sea' || mode === 'real' ? mode : (store('wplace') || 'real');
   W.honest = q0.has('honest') ? q0.get('honest') === '1' : store('whonest') === '1';
   W.plain = q0.has('plain') ? q0.get('plain') === '1' : store('wplain') === '1';
-  W.ov = await api(`overlay?core=${W.core}&mode=${W.placeMode}`);
+  W.ov = await wapi(`overlay?core=${W.core}&mode=${W.placeMode}`);
   W.scene = W.map === 'world' || W.ov.continents.some(c => c.id === W.map);
   W.focus = W.scene && W.map !== 'world' ? W.map : null;
   W.info = W.map === 'world' ? { id: 'world', name: 'World + dungeons', basemaps: [], zones: [], extent: null }
-    : await api(`mapinfo?core=${W.core}&map=${W.map}`);
+    : await wapi(`mapinfo?core=${W.core}&map=${W.map}`);
   W.cont = {};
   if (W.scene) {
     W.atlas = W.ov.continents.map(c => ({ ...c, continent: true })).concat(W.ov.instances);
     applyPlace();
     await Promise.all(W.ov.continents.filter(c => placeOf(c.id)).map(async c => {
-      try { W.cont[c.id] = c.id === W.focus ? W.info : await api(`mapinfo?core=${W.core}&map=${c.id}`); } catch (e) { W.cont[c.id] = null; }
+      try { W.cont[c.id] = c.id === W.focus ? W.info : await wapi(`mapinfo?core=${W.core}&map=${c.id}`); } catch (e) { W.cont[c.id] = null; }
     }));
   }
 
@@ -195,7 +203,7 @@ async function worldPage(core, mapId) {
       results.textContent = '';
       const q = search.value.trim();
       if (q.length < 2) return;
-      const hits = await api(`live/find?core=${W.core}&q=${encodeURIComponent(q)}`);
+      const hits = await wapi(`live/find?core=${W.core}&q=${encodeURIComponent(q)}`);
       for (const h of hits) results.append(el('div', { class: 'row', onclick: () => {
         results.textContent = ''; search.value = ''; setDrawer(false);
         if (h.map === W.map || (worldScene() && (placeOf(h.map) || allWorld()))) selectBot(h.guid, true); else go(`/w/${W.core}/${h.map}?bot=${h.guid}`);
@@ -285,7 +293,7 @@ async function worldPage(core, mapId) {
   mapObj.on('moveend', debounce(() => { refreshViewportLayers(); updateZones(); updateNames(); updateZoneLevelLabels(); updateLod(); updateClusterChips(); saveView(); }, 400));
   mapObj.on('zoomend', debounce(() => { updateLod(); updateClusterChips(); if (W.terrain) W.terrain.sync(); syncSceneGround(); }, 150));
   mapObj.on('click', () => { closeSheet(); setDrawer(false); });
-  ingestSnapshot(await api(`live?core=${W.core}&map=${apiMap()}`));
+  ingestSnapshot(await wapi(`live?core=${W.core}&map=${apiMap()}`));
   const want = new URLSearchParams(location.search).get('bot');
   if (want) selectBot(+want, true);
   W.timer = setInterval(() => { if (document.visibilityState === 'visible') poll(); }, 3000);
@@ -486,7 +494,7 @@ function mountTerrain(map, core, mapId, info, boundsOf, ui) {
     if (state.info && (state.info.available || !state.info.pending) || polled++ > 6) return;
     setTimeout(async () => {
       try {
-        const fresh = await api(`terrain?core=${encodeURIComponent(core)}&map=${mapId}`);
+        const fresh = await wapi(`terrain?core=${encodeURIComponent(core)}&map=${mapId}`);
         if (fresh && !fresh.pending) {
           state.info = fresh;
           fillTerrainChips(ui.chips, fresh, sync);
@@ -868,7 +876,7 @@ function applyLayer(key) {
 
 async function poll() {
   try {
-    ingestSnapshot(await api(`live?core=${W.core}&map=${apiMap()}`));
+    ingestSnapshot(await wapi(`live?core=${W.core}&map=${apiMap()}`));
   } catch (e) { W.ui.status.textContent = String(e.message || e); }
 }
 
@@ -971,7 +979,7 @@ function legend() {
 
 async function loadEvents() {
   if (!W.on.events) return;
-  const rows = await api(`live/events?core=${W.core}&map=${apiMap()}&seconds=1800&kinds=death,levelup,quest,pvp`);
+  const rows = await wapi(`live/events?core=${W.core}&map=${apiMap()}&seconds=1800&kinds=death,levelup,quest,pvp`);
   W.layers.events.clearLayers();
   for (const e of rows) {
     const [c, label] = EVENT_STYLE[e.kind] || EVENT_STYLE.other;
@@ -990,7 +998,7 @@ function styleVisibility() {
 }
 
 async function loadZoneLevels() {
-  const rows = await api(`layer?core=${W.core}&map=${apiMap()}&kind=zonelevels&left=0&right=0&top=0&bottom=0`);
+  const rows = await wapi(`layer?core=${W.core}&map=${apiMap()}&kind=zonelevels&left=0&right=0&top=0&bottom=0`);
   const layer = W.layers.zonelv;
   layer.clearLayers();
   W.zoneLabels = null;
@@ -1021,7 +1029,7 @@ function updateZoneLevelLabels() {
 function refreshViewportLayers() { for (const k of ['npcs', 'objects', 'nodes', 'tele']) if (W.on[k]) loadViewportLayer(k); }
 
 async function loadIntents() {
-  const rows = await api(`live/intents?core=${W.core}&map=${apiMap()}&seconds=900`);
+  const rows = await wapi(`live/intents?core=${W.core}&map=${apiMap()}&seconds=900`);
   const layer = W.layers.intents;
   layer.clearLayers();
   for (const r of rows) {
@@ -1048,7 +1056,7 @@ async function loadViewportLayer(key) {
     q.set('mode', W.placeMode); q.set('honest', W.honest ? '1' : '0'); q.set('dungeons', W.on.dungeons ? '1' : '0');
     if (W.focus !== null) q.set('focus', W.focus);
   }
-  const d = await api('layer?' + q.toString());
+  const d = await wapi('layer?' + q.toString());
   const scene = !!d.scene;
   const at = (map, x, y) => bpos(scene ? map : W.map, x, y);
   const rows = list => (list || []).map(r => (Array.isArray(r)
@@ -1138,7 +1146,7 @@ async function selectBot(guid, center) {
 async function refreshSelected(center) {
   const guid = W.selected;
   let card;
-  try { card = await api(`live/bot?core=${W.core}&guid=${guid}`); } catch (e) { W.ui.sheet.classList.remove('hidden'); W.ui.sheet.textContent = 'This bot is not online any more.'; return; }
+  try { card = await wapi(`live/bot?core=${W.core}&guid=${guid}`); } catch (e) { W.ui.sheet.classList.remove('hidden'); W.ui.sheet.textContent = 'This bot is not online any more.'; return; }
   if (W.selected !== guid) return;
   if (worldScene() ? (W.focus !== null && !placeOf(card.map)) : card.map !== W.map) { go(`/w/${W.core}/${card.map}?bot=${guid}`); return; }
   W.layers.sel.clearLayers();
