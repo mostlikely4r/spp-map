@@ -9,7 +9,8 @@ a { color: var(--accent); text-decoration: none; }
 header#top { position: sticky; top: 0; z-index: 1000; display: flex; gap: 10px; align-items: center; padding: 10px 14px;
   padding-top: max(10px, env(safe-area-inset-top)); background: #111317; border-bottom: 1px solid #2c2f36; overflow-x: auto; }
 .brand { font-weight: 700; color: var(--text); white-space: nowrap; }
-nav#corechips { display: flex; gap: 6px; }
+nav#corechips { display: flex; gap: 6px; overflow-x: auto; min-width: 0; scrollbar-width: none; }
+header#top > .chip { flex-shrink: 0; }
 main { padding: 12px 14px 40px; max-width: 1100px; margin: 0 auto; }
 .chip { display: inline-block; padding: 5px 11px; border-radius: 999px; background: var(--panel2); color: var(--text); border: 1px solid transparent;
   font-size: 13px; white-space: nowrap; cursor: pointer; user-select: none; }
@@ -151,3 +152,5 @@ button.on { outline: 2px solid var(--accent); }
 .addserver { margin: 12px 0; }
 .addserver summary { cursor: pointer; font-weight: 600; }
 .wloading { margin: 16px; }
+.tile.demo { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; border: 1px solid #4a3a12; }
+.demochip { background: #4a3a12; color: #ffd27a; }

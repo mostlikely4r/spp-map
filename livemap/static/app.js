@@ -1,5 +1,27 @@
 'use strict';
 
+const LM = (() => {
+  const cfg = Object.assign({ mode: 'api', base: '' }, window.LM_CONFIG || {});
+  cfg.demo = cfg.mode === 'static';
+  if (cfg.mode === 'static') {
+    try {
+      const saved = JSON.parse(localStorage.getItem('lm_remote') || 'null');
+      if (saved && saved.url) { cfg.mode = 'remote'; cfg.remote = saved.url.replace(/\/+$/, ''); cfg.token = saved.token || ''; }
+    } catch (e) { }
+  }
+  return cfg;
+})();
+
+function asset(p) {
+  if (LM.mode === 'static') return LM.base + p.split('?')[0];
+  if (LM.mode === 'remote') return LM.remote + p + (p.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(LM.token);
+  return p;
+}
+
+function unbased(p) { return (LM.base && (p === LM.base || p.startsWith(LM.base + '/')) ? p.slice(LM.base.length) : p) || '/'; }
+
+function here() { return unbased(location.pathname); }
+
 const state = { core: store('core') || '', verdict: '', family: '', bucket: '', preview: '', flipped: false, q: '', offset: 0 };
 const view = document.getElementById('view');
 let summaryCache = null;
@@ -25,7 +47,15 @@ function el(tag, attrs, ...kids) {
 }
 
 async function api(path, opts) {
-  const r = await fetch('/api/' + path, opts);
+  if (LM.mode === 'static') return demoApi(path, opts);
+  let r;
+  if (LM.mode === 'remote') {
+    const o = Object.assign({}, opts || {});
+    o.headers = Object.assign({}, o.headers || {}, { 'X-Livemap-Token': LM.token });
+    try { r = await fetch(LM.remote + '/api/' + path, o); }
+    catch (e) { throw new Error(`Cannot reach ${LM.remote}: is livemap running there, and does its livemap.toml allow this page (pages_origin)?`); }
+    if (r.status === 401) throw new Error('The server refused the access token. Copy the token from its data/access_token.txt.');
+  } else r = await fetch('/api/' + path, opts);
   if (r.status === 401) throw new Error('Not signed in on this device: open the access link once.');
   const data = await r.json();
   if (data && data.error) throw new Error(data.error);
@@ -34,10 +64,10 @@ async function api(path, opts) {
 
 function add(...kids) { view.append(...kids.flat().filter(k => k !== null && k !== undefined && k !== false)); }
 
-function go(path) { history.pushState({}, '', path); route(); }
+function go(path) { history.pushState({}, '', LM.base + path); route(); }
 document.addEventListener('click', e => {
   const a = e.target.closest('a[data-link]');
-  if (a && a.origin === location.origin) { e.preventDefault(); go(a.pathname + a.search + a.hash); }
+  if (a && a.origin === location.origin) { e.preventDefault(); go(unbased(a.pathname) + a.search + a.hash); }
 });
 window.addEventListener('popstate', route);
 
@@ -62,7 +92,15 @@ function helpDot() {
   return false;
 }
 
+function demoChip() {
+  const nav = document.getElementById('top');
+  if (!LM.demo || !nav || document.getElementById('navdemo')) return;
+  nav.insertBefore(el('a', { href: '/help', class: 'chip demochip', id: 'navdemo', 'data-link': 1 },
+    LM.mode === 'remote' ? 'connected' : 'demo'), document.getElementById('corechips'));
+}
+
 function topBar(kind) {
+  demoChip();
   const set = (id, on) => { const n = document.getElementById(id); if (n) n.classList.toggle('on', on); };
   const tests = document.getElementById('navtests');
   if (tests) tests.classList.toggle('hidden', !testCores().length);
@@ -109,9 +147,9 @@ function showError(err) {
 
 async function route() {
   if (typeof stopWorld === 'function') stopWorld();
-  if (location.pathname !== '/help') clearInterval(helpTimer);
+  if (here() !== '/help') clearInterval(helpTimer);
   if (mapObj) { mapObj.remove(); mapObj = null; }
-  const p = location.pathname;
+  const p = here();
   try {
     if (!capsCache) {
       try { capsCache = await api('capabilities'); } catch (e) { capsCache = { cores: {}, failed: String(e.message || e) }; }
@@ -122,7 +160,7 @@ async function route() {
     if (p === '/settings') { topBar('help'); return await settingsPage(); }
     if (p === '/' || p === '/w' || p === '/w/') {
       const core = defaultCore();
-      if (!core) { history.replaceState({}, '', '/help'); topBar('help'); return await helpPage(); }
+      if (!core) { history.replaceState({}, '', LM.base + '/help'); topBar('help'); return await helpPage(); }
       topBar('map');
       await worldPage(core, null);
       return coreChips('map');
@@ -342,7 +380,7 @@ function capsSignature(c) {
 function watchHelp() {
   clearInterval(helpTimer);
   helpTimer = setInterval(async () => {
-    if (location.pathname !== '/help' || document.visibilityState !== 'visible') return;
+    if (here() !== '/help' || document.visibilityState !== 'visible') return;
     try {
       const fresh = await api('capabilities?refresh=1');
       if (capsSignature(fresh) !== capsSignature(capsCache)) { capsCache = fresh; helpPage(); }
@@ -428,6 +466,44 @@ function setupForm(first) {
   return box;
 }
 
+const REPO_URL = 'https://github.com/mostlikely4r/spp-map';
+
+function connectBox() {
+  if (LM.mode === 'remote') {
+    return el('div', { class: 'tile demo' },
+      el('h3', {}, 'Connected to your server'),
+      el('div', { class: 'sub' }, 'This page reads ', el('code', {}, LM.remote), ' directly from your browser; the data never passes through this site.'),
+      el('div', { class: 'chips' }, el('button', { class: 'ghost', onclick: () => { try { localStorage.removeItem('lm_remote'); } catch (e) { } location.href = LM.base + '/'; } }, 'disconnect, back to the demo')));
+  }
+  const url = el('input', { type: 'search', placeholder: 'https://xxxx.trycloudflare.com or http://localhost:8420' });
+  const token = el('input', { type: 'search', placeholder: 'access token (data/access_token.txt next to livemap)' });
+  const out = el('div', { class: 'meta' });
+  const connect = el('button', {}, 'connect');
+  connect.onclick = async () => {
+    const u = url.value.trim().replace(/\/+$/, '').replace(/\/\?token=.*$/, '');
+    const fromLink = url.value.match(/[?&]token=([^&#]+)/);
+    const t = token.value.trim() || (fromLink ? decodeURIComponent(fromLink[1]) : '');
+    if (!/^https?:\/\//.test(u)) { out.textContent = 'The address starts with http:// or https://'; return; }
+    if (!t) { out.textContent = 'The token is needed: paste the access link, or the contents of data/access_token.txt.'; return; }
+    out.textContent = 'checking ...';
+    try {
+      const r = await fetch(u + '/api/capabilities', { headers: { 'X-Livemap-Token': t } });
+      if (r.status === 401) { out.textContent = 'The server refused this token.'; return; }
+      if (!r.ok) { out.textContent = 'The server answered ' + r.status + '.'; return; }
+      localStorage.setItem('lm_remote', JSON.stringify({ url: u, token: t }));
+      location.href = LM.base + '/';
+    } catch (e) {
+      out.textContent = 'Could not reach it. Is livemap running there (a recent version), and is this page allowed in its livemap.toml (pages_origin)? Plain http only works for localhost.';
+    }
+  };
+  return el('div', { class: 'tile demo' },
+    el('h3', {}, 'This is a demo'),
+    el('div', { class: 'sub' }, 'Recorded from a test server running PlayerBots: bots move in a loop over a few minutes, nothing here is live and nothing can be changed. ',
+      'To see your own server, ', el('a', { href: REPO_URL, target: '_blank', rel: 'noopener' }, 'run livemap next to it'), ' (Windows: unzip and double-click), or connect this page to a livemap you already run:'),
+    url, token, el('div', { class: 'chips' }, connect), out,
+    el('div', { class: 'meta' }, 'Your browser talks to your server directly; the token stays in this browser. Changes (settings, triage) stay off from here.'));
+}
+
 function unlocks(report, capId) {
   return Object.entries(report.layers).filter(([, l]) => l.status !== 'ok' && l.needs.includes(capId)).map(([k, l]) => [k, l.label]);
 }
@@ -440,6 +516,7 @@ async function helpPage(refresh) {
   add(el('h1', {}, 'Help and setup'),
     el('p', { class: 'sub' }, 'What this map can show for each server, where each part comes from, and how to unlock the rest. ',
       el('button', { class: 'ghost', onclick: () => helpPage(true) }, 're-check')));
+  if (LM.demo) add(connectBox());
   if (capsCache.failed) add(el('div', { class: 'notice' }, 'Could not check the servers: ' + capsCache.failed));
   if (!cores.length && !capsCache.failed) {
     add(el('h2', {}, 'Set up'), canWrite ? setupForm(true)
@@ -487,6 +564,7 @@ async function helpPage(refresh) {
   if (!cards) add(el('p', { class: 'sub' }, 'Everything is set up. Nothing more to unlock.'));
   if (canWrite) add(el('details', { class: 'addserver' }, el('summary', {}, 'Add another server'), setupForm(false)));
   if (cores.some(([, r]) => r.caps.some(c => c.status !== 'ok' && c.detail.includes('listed but not written')))) watchHelp();
+  if (LM.demo) return;
   add(el('h2', { id: 'settings' }, 'Settings'));
   await settingsPage(true);
   if (location.hash) {
@@ -574,10 +652,10 @@ async function testPage(core, test) {
     el('h1', {}, prettyTest(test)),
     el('div', { class: 'sub' }, `${core} · ${d.history.length} runs · ${passes} pass`),
     quest ? el('div', { class: 'sub' }, `quest ${quest.id}: ${quest.title} (level ${quest.level})`) : null,
-    el('h2', {}, 'Triage'),
-    el('div', { class: 'triage' }, ['bug', 'fluke', 'gap', 'fixed'].map(b =>
-      el('span', { class: 'chip' + (current === b ? ' on' : ''), onclick: () => saveTriage(current === b ? '' : b) }, b))),
-    note, el('div', {}, el('button', { class: 'ghost', onclick: () => saveTriage(current) }, 'save note')),
+    ...(LM.demo ? [] : [el('h2', {}, 'Triage'),
+      el('div', { class: 'triage' }, ['bug', 'fluke', 'gap', 'fixed'].map(b =>
+        el('span', { class: 'chip' + (current === b ? ' on' : ''), onclick: () => saveTriage(current === b ? '' : b) }, b))),
+      note, el('div', {}, el('button', { class: 'ghost', onclick: () => saveTriage(current) }, 'save note'))]),
     el('h2', {}, 'History'),
     el('div', { class: 'list' }, d.history.map(h => el('a', { class: 'row', href: `/r/${h.id}`, 'data-link': 1 },
       el('div', { class: 'name' }, verdict(h.verdict), ' ', h.ts, ' · ', h.host),
@@ -600,8 +678,8 @@ async function runPage(id) {
     el('h1', {}, verdict(r.verdict), ' ', prettyTest(r.test)),
     el('div', { class: 'sub' }, `${r.core} · ${r.ts} · host ${r.host}${r.elapsed_s ? ' · ' + r.elapsed_s + ' s' : ''}`),
     el('div', { class: 'msg' }, r.msg),
-    el('div', { class: 'sub' }, el('a', { href: testLink(r.core, r.test), 'data-link': 1 }, 'test history'), ' · ',
-      el('a', { href: `/snapshot/run/${id}.png`, target: '_blank' }, 'snapshot image')),
+    el('div', { class: 'sub' }, el('a', { href: testLink(r.core, r.test), 'data-link': 1 }, 'test history'), LM.demo ? null : ' · ',
+      LM.demo ? null : el('a', { href: asset(`/snapshot/run/${id}.png`), target: '_blank' }, 'snapshot image')),
     d.quest && !d.quest.error ? el('div', { class: 'sub' }, `quest ${d.quest.id}: ${d.quest.title}`) : null,
     ...(d.notice || []).map(n => el('div', { class: 'notice' }, n)),
     d.record ? recordBlock(d.record) : null,
@@ -651,7 +729,7 @@ function drawRunMap(div, toggles, d) {
   if (d.basemap) {
     const b = d.basemap.bounds;
     bounds = L.latLngBounds(ll(b.bottom, b.left), ll(b.top, b.right));
-    L.imageOverlay(`/basemap/${d.run.core}/${d.basemap.image}`, bounds, { pane: 'baseimg' }).addTo(mapObj);
+    L.imageOverlay(asset(`/basemap/${d.run.core}/${d.basemap.image}`), bounds, { pane: 'baseimg' }).addTo(mapObj);
   }
   const markers = L.layerGroup().addTo(mapObj);
   for (const m of d.markers) {

@@ -210,12 +210,12 @@ async function worldPage(core, mapId) {
   W.art = artParam === null ? (store('wart') === 'minimap' ? 'minimap' : 'painted') : (artParam === 'minimap' ? 'minimap' : 'painted');
   if (mapId === null || mapId === undefined || (mapId !== 'world' && isNaN(mapId))) mapId = 'world';
   W.map = mapId;
-  if (location.pathname !== `/w/${W.core}/${W.map}`) history.replaceState({}, '', `/w/${W.core}/${W.map}` + location.search);
+  if (here() !== `/w/${W.core}/${W.map}`) history.replaceState({}, '', LM.base + `/w/${W.core}/${W.map}` + location.search);
   const q0 = new URLSearchParams(location.search);
   const mode = q0.get('place');
   W.placeMode = mode === 'sea' || mode === 'real' ? mode : (store('wplace') || 'real');
   W.honest = q0.has('honest') ? q0.get('honest') === '1' : store('whonest') === '1';
-  W.turn = q0.has('turn') ? q0.get('turn') === '1' : store('wturn') === '1';
+  W.turn = !LM.demo && (q0.has('turn') ? q0.get('turn') === '1' : store('wturn') === '1');
   W.plain = q0.has('plain') ? q0.get('plain') === '1' : store('wplain') === '1';
   W.ov = await wapi(`overlay?core=${W.core}&mode=${W.placeMode}`);
   W.scene = W.map === 'world' || W.ov.continents.some(c => c.id === W.map);
@@ -296,7 +296,7 @@ async function worldPage(core, mapId) {
     } }, PLACE_MODES.map(([v, l]) => el('option', { value: v, selected: v === W.placeMode ? 'selected' : null }, l)));
     W.honestChip = el('span', { class: 'chip' + (W.honest ? ' on' : ''), onclick: () => setScene({ honest: !W.honest }) }, 'honest (stack at doors)');
     W.plainChip = el('span', { class: 'chip' + (W.plain ? ' on' : ''), onclick: () => setScene({ plain: !W.plain }) }, 'plain art (no borders)');
-    W.turnChip = el('span', { class: 'chip' + (W.turn ? ' on' : '') + (W.honest ? '' : ' hidden'), title: 'turn each dungeon so the way you walk in matches its entrance',
+    W.turnChip = el('span', { class: 'chip' + (W.turn ? ' on' : '') + (W.honest && !LM.demo ? '' : ' hidden'), title: 'turn each dungeon so the way you walk in matches its entrance',
       onclick: () => setScene({ turn: !W.turn }) }, 'turn to match entrances');
     sceneBlock.append(el('div', { class: 'wdtitle' }, 'Dungeons on the map'), placeSelect, el('div', { class: 'chips' }, W.honestChip, W.turnChip, W.plainChip));
   }
@@ -343,7 +343,7 @@ async function worldPage(core, mapId) {
     };
     chips.append(chip);
   }
-  if (W.hidden.size) {
+  if (W.hidden.size && !LM.demo) {
     const first = [...W.hidden].find(k => k !== 'tests') || [...W.hidden][0];
     chips.after(el('div', { class: 'wdmore' }, el('a', { href: `/help#layer-${W.core}-${first}`, 'data-link': 1 },
       `${W.hidden.size} more layer${W.hidden.size === 1 ? '' : 's'} available here — how?`)));
@@ -444,7 +444,7 @@ function syncOverlays() {
     const want = W.on[key] && !allWorld() && info.available && !info.wmo && mapObj.getZoom() >= info.min_zoom;
     const have = W.overlays[key];
     if (want && !have) {
-      W.overlays[key] = L.tileLayer(`/tiles/${W.core}/adt/${W.map}/{z}/{x}/{y}.webp?v=${info.version}&ov=${kind}`, {
+      W.overlays[key] = L.tileLayer(asset(`/tiles/${W.core}/adt/${W.map}/{z}/{x}/{y}.webp?v=${info.version}&ov=${kind}`), {
         tileSize: 256, minNativeZoom: info.min_zoom, maxNativeZoom: info.max_zoom, minZoom: mapObj.getMinZoom(), maxZoom: mapObj.getMaxZoom(),
         noWrap: true, keepBuffer: 2, pane: 'ovl', updateWhenIdle: false }).addTo(mapObj);
     } else if (!want && have) {
@@ -484,7 +484,7 @@ const SceneGround = L.GridLayer.extend({
       const sx = x0 + src.off[1] * s, sy = y0 + src.off[0] * s;
       for (let ty = Math.floor(sy / 256); ty <= Math.floor((sy + 255) / 256); ty++)
         for (let tx = Math.floor(sx / 256); tx <= Math.floor((sx + 255) / 256); tx++) {
-          const url = `/tiles/${W.core}/adt/${src.id}/${coords.z}/${tx}/${ty}.webp?v=${src.info.version}&shade=${prefs.shade}${bldParam(prefs)}`;
+          const url = asset(`/tiles/${W.core}/adt/${src.id}/${coords.z}/${tx}/${ty}.webp?v=${src.info.version}&shade=${prefs.shade}${bldParam(prefs)}`);
           jobs.push(new Promise(res => {
             const img = new Image();
             img.onload = () => { ctx.drawImage(img, tx * 256 - sx, ty * 256 - sy); res(); };
@@ -535,7 +535,7 @@ function maskToLand(overlay, outer, land) {
   const ox = (outer.left - land.bounds.left) / w, oy = (outer.top - land.bounds.top) / h;
   const pos = (o, f) => (Math.abs(1 - f) < 1e-6 ? 0 : o / (1 - f)) * 100;
   for (const pre of ['mask', 'webkitMask']) {
-    img.style[pre + 'Image'] = `url(/basemap/${W.core}/${land.key}.webp)`;
+    img.style[pre + 'Image'] = `url(${asset(`/basemap/${W.core}/${land.key}.webp`)})`;
     img.style[pre + 'Size'] = `${fw * 100}% ${fh * 100}%`;
     img.style[pre + 'Position'] = `${pos(ox, fw)}% ${pos(oy, fh)}%`;
     img.style[pre + 'Repeat'] = 'no-repeat';
@@ -560,7 +560,7 @@ function terrainKey(prefs) { return prefs.shade + '-' + prefs.bld + '-' + prefs.
 function bldParam(prefs) { return (prefs.bld === '1' ? '' : '&bld=' + prefs.bld) + (prefs.trees ? '' : '&trees=0') + (prefs.cut === null || prefs.cut === undefined ? '' : '&cut=' + prefs.cut); }
 
 function terrainUrl(core, mapId, info, prefs) {
-  return `/tiles/${core}/adt/${mapId}/{z}/{x}/{y}.webp?v=${info.version}&shade=${prefs.shade}${bldParam(prefs)}`;
+  return asset(`/tiles/${core}/adt/${mapId}/{z}/{x}/{y}.webp?v=${info.version}&shade=${prefs.shade}${bldParam(prefs)}`);
 }
 
 function terrainLayerFor(info, core, mapId, prefs, bounds, map) {
@@ -677,7 +677,7 @@ function setScene(patch) {
   history.replaceState({}, '', u.pathname + u.search);
   if (W.honestChip) W.honestChip.classList.toggle('on', W.honest);
   if (W.plainChip) W.plainChip.classList.toggle('on', W.plain);
-  if (W.turnChip) { W.turnChip.classList.toggle('on', W.turn); W.turnChip.classList.toggle('hidden', !W.honest); }
+  if (W.turnChip) { W.turnChip.classList.toggle('on', W.turn); W.turnChip.classList.toggle('hidden', !W.honest || LM.demo); }
   rebuildScene();
 }
 
@@ -717,11 +717,11 @@ function drawScene() {
     if (m.continent || !m.extent) {
       const painted = m.continent && W.art !== 'minimap' ? paintedContinent(m.id) : null;
       if (painted) {
-        const art = L.imageOverlay(`/basemap/${W.core}/${painted.key}.webp`, offBox(m.id, painted.bounds), { pane: 'baseimg' });
+        const art = L.imageOverlay(asset(`/basemap/${W.core}/${painted.key}.webp`), offBox(m.id, painted.bounds), { pane: 'baseimg' });
         if (allWorld()) art.on('add', () => maskToLand(art, painted.bounds, m.base));
         art.addTo(W.layers.base);
       }
-      else if (m.base) L.imageOverlay(`/basemap/${W.core}/${m.base.key}.webp`, box, { pane: 'baseimg' }).addTo(W.layers.base);
+      else if (m.base) L.imageOverlay(asset(`/basemap/${W.core}/${m.base.key}.webp`), box, { pane: 'baseimg' }).addTo(W.layers.base);
       continue;
     }
     const inst = { m, b, box, pin: null };
@@ -734,8 +734,8 @@ function drawScene() {
     const open = ev => { L.DomEvent.stop(ev); go(`/w/${W.core}/${m.id}`); };
     const model = m.model && W.art === 'minimap' && terrainPrefs().detailed ? m.model : null;
     const turn = turnParam(m.id);
-    if (model) inst.img = L.imageOverlay(`/basemap/${W.core}/${model.key}.webp?v=${model.v}${turn ? '&' + turn : ''}`, offBox(m.id, model.bounds), { pane: 'instimg', interactive: true }).on('click', open).addTo(W.layers.base);
-    else if (m.base) inst.img = L.imageOverlay(`/basemap/${W.core}/${m.base.key}.webp${turn ? '?' + turn : ''}`, turn ? offBox(m.id, m.base.bounds) : box, { pane: 'instimg', interactive: true }).on('click', open).addTo(W.layers.base);
+    if (model) inst.img = L.imageOverlay(asset(`/basemap/${W.core}/${model.key}.webp?v=${model.v}${turn ? '&' + turn : ''}`), offBox(m.id, model.bounds), { pane: 'instimg', interactive: true }).on('click', open).addTo(W.layers.base);
+    else if (m.base) inst.img = L.imageOverlay(asset(`/basemap/${W.core}/${m.base.key}.webp${turn ? '?' + turn : ''}`), turn ? offBox(m.id, m.base.bounds) : box, { pane: 'instimg', interactive: true }).on('click', open).addTo(W.layers.base);
     else inst.plain = L.rectangle(box, { color: '#576574', weight: 1, fill: false, interactive: true }).on('click', open).addTo(W.layers.base);
     W.inst.push(inst);
   }
@@ -877,7 +877,7 @@ function drawBase() {
   if (!base) base = wmo || terrain;
   W.base = base;
   if (base) {
-    if (!geometry) L.imageOverlay(`/basemap/${W.core}/${base.key}.webp`, imgBounds(base.bounds), { pane: 'baseimg' }).addTo(W.layers.base);
+    if (!geometry) L.imageOverlay(asset(`/basemap/${W.core}/${base.key}.webp`), imgBounds(base.bounds), { pane: 'baseimg' }).addTo(W.layers.base);
     if (!W.fitted) { mapObj.fitBounds(imgBounds(base.bounds)); W.fitted = true; }
   } else if (!W.fitted && W.info.extent) { mapObj.fitBounds(imgBounds(W.info.extent)); W.fitted = true; }
   else if (!W.fitted) mapObj.setView([0, 0], -3);
@@ -945,7 +945,7 @@ function updateSceneZones() {
     if (!continent || !placeOf(+id) || px * Math.abs(continent.bounds.left - continent.bounds.right) <= 3600) continue;
     for (const z of info.basemaps.filter(b => b.kind === 'zone' && b.area).sort((a, b) => area(b.bounds) - area(a.bounds))) {
       const zb = offBox(+id, z.bounds);
-      if (view.intersects(zb)) L.imageOverlay(`/basemap/${W.core}/${z.key}.webp`, zb, { pane: 'zoneimg' }).addTo(W.layers.zones);
+      if (view.intersects(zb)) L.imageOverlay(asset(`/basemap/${W.core}/${z.key}.webp`), zb, { pane: 'zoneimg' }).addTo(W.layers.zones);
     }
   }
 }
@@ -964,7 +964,7 @@ function updateZones() {
   if (W.on.zones && W.art !== 'minimap' && pxPerYard * cw > 3600) {
     for (const z of zones.slice().sort((a, b) => area(b.bounds) - area(a.bounds))) {
       const zb = imgBounds(z.bounds);
-      if (view.intersects(zb)) L.imageOverlay(`/basemap/${W.core}/${z.key}.webp`, zb, { opacity: 1, pane: 'zoneimg' }).addTo(W.layers.zones);
+      if (view.intersects(zb)) L.imageOverlay(asset(`/basemap/${W.core}/${z.key}.webp`), zb, { opacity: 1, pane: 'zoneimg' }).addTo(W.layers.zones);
     }
   }
   if (W.on.labels) {
@@ -1017,6 +1017,7 @@ function ingestSnapshot(snap) {
   const lost = allWorld() && W.on.dungeons && optionApplies('dungeons') && W.notPlaced ? ' / not placed: ' + W.notPlaced : '';
   const age = W.hidden && W.hidden.has('bots') ? 'map only, no player data set up (see Help)' : snap.source === 'db'
     ? (snap.live ? `positions at last save (characters DB, every ${snap.poll_s} s)` : 'characters DB not reachable' + (snap.error ? ': ' + snap.error : ''))
+    : snap.source === 'demo' ? 'demo, recorded ' + (snap.newest || '').slice(0, 10) + ' (plays in a loop)'
     : (snap.live ? 'live' : 'not live (server stopped or positions log off)');
   const where = W.info && W.info.name ? W.info.name : '';
   W.ui.status.textContent = `${where}${where ? ' · ' : ''}${snap.core} · ${age} · ${worldScene() ? W.markers.size : snap.bots.length} here · ${snap.newest ? snap.newest.slice(11) : 'no data yet'}${lost}`;

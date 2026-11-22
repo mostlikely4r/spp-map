@@ -210,6 +210,60 @@ def cmd_doctor(cfg, args):
         print()
 
 
+def cmd_export_static(cfg, args):
+    from .export import Exporter
+    core = args.core or next(iter(cfg.cores), None)
+    if core not in cfg.cores:
+        sys.exit(f"no core named {core!r} in the config")
+    app = App(cfg)
+    app.ingest()
+    with Exporter(app, args.out, core, args.map, args.dungeon or [36], args.base) as ex:
+        ex.run(args.minutes, args.frame, args.tests)
+
+
+def cmd_site(args):
+    from .export import copy_site
+    copy_site(args.src or demo_dir(), args.out, args.base)
+    print(f"site written to {os.path.abspath(args.out)} (base {args.base or '/'})")
+
+
+def demo_dir():
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "demo")
+
+
+def cmd_demo(args):
+    import http.server
+    import mimetypes
+    import webbrowser
+    mimetypes.add_type("image/webp", ".webp")
+    mimetypes.add_type("application/javascript", ".js")
+    root = os.path.abspath(args.dir or demo_dir())
+    if not os.path.isfile(os.path.join(root, "index.html")):
+        sys.exit(f"no demo export in {root} (make one with: python -m livemap export-static --out {root})")
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, directory=root, **kw)
+
+        def log_message(self, fmt, *a):
+            pass
+
+        def send_head(self):
+            path = self.translate_path(self.path)
+            if not os.path.exists(path):
+                self.path = "/index.html"
+            return super().send_head()
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    print(f"livemap demo on http://127.0.0.1:{args.port}/  (recorded data from {root}; Ctrl+C stops it)", flush=True)
+    if args.open:
+        threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{args.port}/")).start()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(prog="livemap")
     parser.add_argument("--config", default=DEFAULT_CONFIG)
@@ -231,9 +285,30 @@ def main():
                    help="art: world-DB spawns land on each map's art; world: the World + dungeons placement")
     p = sub.add_parser("doctor", help="print what each core can show and how to get the rest")
     p.add_argument("--core", action="append")
+    p = sub.add_parser("export-static", help="export a demo area as a static site (demo mode, GitHub Pages)")
+    p.add_argument("--out", default="site")
+    p.add_argument("--core")
+    p.add_argument("--map", type=int, default=0, help="continent of the demo area (default 0, Eastern Kingdoms)")
+    p.add_argument("--dungeon", type=int, action="append", help="dungeon map id to include (default 36, Deadmines)")
+    p.add_argument("--minutes", type=float, default=10, help="how long to record live positions")
+    p.add_argument("--frame", type=float, default=5, help="seconds between recorded frames")
+    p.add_argument("--tests", type=int, default=6, help="how many tests (with run pages) to include")
+    p.add_argument("--base", default="", help="URL path the site is served under, e.g. /spp-map on GitHub Pages")
+    p = sub.add_parser("site", help="copy a demo export with the current web client, e.g. for GitHub Pages")
+    p.add_argument("--src", help="export to copy (default: the bundled demo)")
+    p.add_argument("--out", default="site")
+    p.add_argument("--base", default="", help="URL path the site is served under, e.g. /spp-map")
+    p = sub.add_parser("demo", help="show the bundled demo (no server, database or client needed)")
+    p.add_argument("--dir")
+    p.add_argument("--port", type=int, default=8430)
+    p.add_argument("--open", action="store_true")
     p = sub.add_parser("basemaps", help="prebuild painted basemaps from the client")
     p.add_argument("--core", action="append")
     args = parser.parse_args()
+    if args.cmd == "demo":
+        return cmd_demo(args)
+    if args.cmd == "site":
+        return cmd_site(args)
     path = args.config
     if not os.path.isabs(path) and not os.path.exists(path):
         beside = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), path)
@@ -242,7 +317,8 @@ def main():
     cfg = config.load(path)
     if getattr(args, "port", None):
         cfg.port = args.port
-    {"serve": cmd_serve, "ingest": cmd_ingest, "snapshot": cmd_snapshot, "basemaps": cmd_basemaps, "verify": cmd_verify, "doctor": cmd_doctor}[args.cmd](cfg, args)
+    {"serve": cmd_serve, "ingest": cmd_ingest, "snapshot": cmd_snapshot, "basemaps": cmd_basemaps, "verify": cmd_verify, "doctor": cmd_doctor,
+     "export-static": cmd_export_static}[args.cmd](cfg, args)
 
 
 if __name__ == "__main__":
