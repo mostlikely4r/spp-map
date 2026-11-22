@@ -35,6 +35,9 @@ What works today:
 - **Map badge in the test list.** Each test shows whether its latest run has position data to plot
   (`map` / `no map`), with filters for both. The check runs once per run in the background (newest
   first) and is stored in the catalog (`previews` table).
+- **Tests on the live map.** A 'tests run here' layer puts each test's latest run where it happened
+  (where the bot finished when it was tracked, dashed at the quest location otherwise), coloured by
+  verdict; tap one to open the run. The top bar has a **Tests** button back to the test list.
 - **Run page.** Verdict, message, a timeline of the host bot's events and states, and a map with the
   bot's track plus the quest's giver, objective and turn-in spawns (from the world database) and the
   bots' travel network (nodes + stored walking paths).

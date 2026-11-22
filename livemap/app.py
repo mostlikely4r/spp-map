@@ -382,7 +382,7 @@ class App:
                 notice.append("coarse track from bot_states.csv (heartbeat not available for this run)")
         if map_id is not None and not basemap:
             notice.append("no painted map for this area yet; showing positions on a plain grid")
-        self.catalog.set_preview(run_id, len(world_track), map_id)
+        self.catalog.set_preview(run_id, len(world_track), map_id, run_location(map_id, world_track, markers))
         return {
             "run": run,
             "terrain_render": self.terrain.describe(run["core"], map_id) if map_id is not None else None,
@@ -486,6 +486,15 @@ def focus_role(variant):
     if v.startswith("obj"):
         return "objective"
     return "giver"
+
+
+def run_location(map_id, track, markers):
+    if map_id is not None and track:
+        return map_id, track[-1]["x"], track[-1]["y"], "track"
+    if markers:
+        best = next((m for m in markers if m.get("focus")), None) or next((m for m in markers if m["role"] == "objective"), None) or markers[0]
+        return best["map"], best["x"], best["y"], "quest"
+    return None
 
 
 def quest_markers(quest, variant):

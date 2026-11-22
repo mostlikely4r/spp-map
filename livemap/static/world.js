@@ -11,7 +11,7 @@ const ROLE_COLORS = { flightmaster: '#ffe066', innkeeper: '#ff9f43', auctioneer:
 const INTENT_COLORS = { quest: '#ffd200', 'trainer class': '#a29bfe', 'trainer trade': '#a29bfe', 'trainer mount': '#a29bfe', Bank: '#c8d6e5', AH: '#c8d6e5', Mail: '#c8d6e5',
   Repair: '#8395a7', Vendor: '#8395a7', GatherFishing: '#48dbfb', GatherSkinning: '#e17055', GatherMining: '#b2bec3', GatherHerbalism: '#55efc4',
   Grind: '#ff6b6b', pvp: '#ff3f34', city: '#fab1a0', GenericRpg: '#fd79a8' };
-const DEFAULT_LAYERS = { dungeons: true, bots: true, names: false, zones: true, labels: true, events: true, intents: false, npcs: false, objects: false, nodes: false, tele: false, zonelv: false };
+const DEFAULT_LAYERS = { dungeons: true, tests: false, bots: true, names: false, zones: true, labels: true, events: true, intents: false, npcs: false, objects: false, nodes: false, tele: false, zonelv: false };
 const GO_COLORS = { chest: '#feca57', questgiver: '#ffd200', mailbox: '#c8d6e5', meetingstone: '#a29bfe', fishinghole: '#48dbfb', door: '#576574', generic: '#8395a7' };
 const EVENT_STYLE = { death: ['#e6463c', 'died'], levelup: ['#ffd200', 'level up'], quest: ['#3cdc5a', 'quest'], pvp: ['#ff6b6b', 'pvp'],
   trade: ['#1dd1a1', 'trade'], gear: ['#a29bfe', 'gear'], revive: ['#a0f0ff', 'revived'], kill: ['#ff9f43', 'kill'], group: ['#48dbfb', 'group'],
@@ -297,7 +297,7 @@ async function worldPage(core, mapId) {
   W.backRenderer = L.svg({ pane: 'instback' });
   W.layers = {
     base: L.layerGroup().addTo(mapObj), zones: L.layerGroup(), labels: L.layerGroup(), bots: L.layerGroup(),
-    npcs: L.layerGroup(), objects: L.layerGroup(), nodes: L.layerGroup(), events: L.layerGroup(), tele: L.layerGroup(), intents: L.layerGroup(), zonelv: L.layerGroup(), sel: L.layerGroup().addTo(mapObj),
+    npcs: L.layerGroup(), objects: L.layerGroup(), nodes: L.layerGroup(), events: L.layerGroup(), tests: L.layerGroup(), tele: L.layerGroup(), intents: L.layerGroup(), zonelv: L.layerGroup(), sel: L.layerGroup().addTo(mapObj),
   };
   W.renderer = L.canvas({ padding: 0.3 });
   drawBase();
@@ -307,7 +307,7 @@ async function worldPage(core, mapId) {
       onInfo: fresh => { if (W.info) W.info.terrain_render = fresh; drawBase(); renderStyle(); } });
   renderStyle();
   for (const [key, label] of [['bots', 'bots'], ['names', 'names'], ['labels', worldScene() ? 'zone + map names' : 'zone names'], ['zonelv', 'zone levels'], ['events', 'deaths / quests / levels'],
-    ['intents', 'travel intent'], ['npcs', 'NPCs'], ['objects', 'objects'], ['nodes', 'travel nodes'], ['tele', 'teleport cache']]) {
+    ['intents', 'travel intent'], ['tests', 'tests run here'], ['npcs', 'NPCs'], ['objects', 'objects'], ['nodes', 'travel nodes'], ['tele', 'teleport cache']]) {
     const chip = el('span', { class: 'chip' + (W.on[key] ? ' on' : '') }, label);
     chip.onclick = () => {
       W.on[key] = !W.on[key]; chip.classList.toggle('on', W.on[key]); wSaveLayers();
@@ -325,7 +325,7 @@ async function worldPage(core, mapId) {
   const want = new URLSearchParams(location.search).get('bot');
   if (want) selectBot(+want, true);
   W.timer = setInterval(() => { if (document.visibilityState === 'visible') poll(); }, 3000);
-  W.slowTimer = setInterval(() => { if (document.visibilityState === 'visible') { if (W.on.events) loadEvents(); if (W.on.intents) loadIntents(); } }, 30000);
+  W.slowTimer = setInterval(() => { if (document.visibilityState === 'visible') { if (W.on.events) loadEvents(); if (W.on.tests) loadTests(); if (W.on.intents) loadIntents(); } }, 30000);
   legend();
 }
 
@@ -636,6 +636,7 @@ function rebuildScene() {
   updateZones();
   refreshViewportLayers();
   if (W.on.events) loadEvents();
+  if (W.on.tests) loadTests();
   if (W.on.intents) loadIntents();
   if (W.on.zonelv) loadZoneLevels();
   if (W.selected) refreshSelected();
@@ -929,7 +930,7 @@ function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;
 function applyLayer(key) {
   if (!W.layers) return;
   const layer = { bots: W.layers.bots, zones: W.layers.zones, labels: W.layers.labels, npcs: W.layers.npcs, objects: W.layers.objects,
-    nodes: W.layers.nodes, events: W.layers.events, tele: W.layers.tele, intents: W.layers.intents, zonelv: W.layers.zonelv }[key];
+    nodes: W.layers.nodes, events: W.layers.events, tests: W.layers.tests, tele: W.layers.tele, intents: W.layers.intents, zonelv: W.layers.zonelv }[key];
   styleVisibility();
   if (key === 'names') return updateNames();
   if (key === 'dungeons') return;
@@ -939,6 +940,7 @@ function applyLayer(key) {
     if (key === 'zones' || key === 'labels') updateZones();
     if (key === 'npcs' || key === 'objects' || key === 'nodes' || key === 'tele') loadViewportLayer(key);
     if (key === 'events') loadEvents();
+    if (key === 'tests') loadTests();
     if (key === 'intents') loadIntents();
     if (key === 'zonelv') loadZoneLevels();
   } else mapObj.removeLayer(layer);
@@ -1044,7 +1046,27 @@ function legend() {
   if (W.color === 'state') box.append(item('#3cdc5a', 'active'), item('#ff3b3b', 'combat'), item('#9a9a9a', 'dead'), item('#ffd200', 'flying'), item('#ff46c8', 'test'), item('#4b5563', 'inactive'));
   if (W.color === 'hp') box.append(item('hsl(0,85%,50%)', '0%'), item('hsl(60,85%,50%)', '50%'), item('hsl(120,85%,50%)', '100%'));
   box.append(el('span', {}, el('span', { class: 'dot', style: 'background:#888;border:2px solid #fff' }), 'real player'));
+  if (W.on.tests) for (const [k, c] of Object.entries(VERDICT_COLORS)) box.append(el('span', {}, el('span', { class: 'dot', style: `background:transparent;border:3px solid ${c}` }), 'test ' + k.toLowerCase()));
   if (W.on.events) for (const k of ['death', 'levelup', 'quest']) box.append(el('span', {}, el('span', { class: 'dot sq', style: `background:${EVENT_STYLE[k][0]}` }), EVENT_STYLE[k][1]));
+}
+
+const VERDICT_COLORS = { PASS: '#3cdc5a', FAIL: '#ff3b3b', ABORT: '#ff9f43', IMPOSSIBLE: '#8395a7' };
+
+async function loadTests() {
+  if (!W.on.tests) return;
+  const rows = await wapi(`tests/where?core=${W.core}&map=${apiMap()}`);
+  const layer = W.layers.tests;
+  layer.clearLayers();
+  for (const r of rows) {
+    const pos = bpos(r.map, r.x, r.y);
+    if (!pos) continue;
+    const tracked = r.loc === 'track';
+    L.circleMarker(pos, { radius: 6, color: VERDICT_COLORS[r.verdict] || '#8395a7', weight: 3, fill: true, fillColor: '#0b0f14', fillOpacity: tracked ? 0.6 : 0.15,
+      dashArray: tracked ? null : '3 3', renderer: W.renderer })
+      .bindTooltip(`${prettyTest(r.test)} \u00b7 ${r.verdict} \u00b7 ${r.ts.slice(5, 16)}${tracked ? '' : ' \u00b7 quest location, no track'}`)
+      .on('click', e => { L.DomEvent.stopPropagation(e); go(`/r/${r.id}`); })
+      .addTo(layer);
+  }
 }
 
 async function loadEvents() {

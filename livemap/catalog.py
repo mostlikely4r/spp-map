@@ -56,6 +56,8 @@ create table if not exists favorites (
 """
 
 BUCKETS = ("bug", "fluke", "gap", "fixed")
+PREVIEW_VERSION = 2
+PREVIEW_COLUMNS = (("loc_map", "integer"), ("x", "real"), ("y", "real"), ("loc", "text"), ("v", "integer"))
 
 
 class Catalog:
@@ -65,6 +67,10 @@ class Catalog:
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        have = {r[1] for r in self.db.execute("pragma table_info(previews)")}
+        for name, kind in PREVIEW_COLUMNS:
+            if name not in have:
+                self.db.execute(f"alter table previews add column {name} {kind}")
         self.db.commit()
 
     def query(self, sql, args=()):
@@ -169,16 +175,35 @@ class Catalog:
 
     def missing_previews(self, limit=20):
         return [r["id"] for r in self.query(
-            "select r.id from runs r left join previews p on p.run_id=r.id where p.run_id is null"
-            " order by r.ts desc, r.id desc limit ?", (limit,))]
+            "select r.id from runs r left join previews p on p.run_id=r.id"
+            " where p.run_id is null or coalesce(p.v, 0) < ?"
+            " order by r.ts desc, r.id desc limit ?", (PREVIEW_VERSION, limit))]
 
-    def set_preview(self, run_id, points, map_id):
+    def set_preview(self, run_id, points, map_id, where=None):
+        loc_map, x, y, loc = where if where else (None, None, None, None)
         with self.lock:
             self.db.execute(
-                "insert into previews (run_id, points, map_id, checked) values (?, ?, ?, datetime('now'))"
-                " on conflict(run_id) do update set points=excluded.points, map_id=excluded.map_id, checked=excluded.checked",
-                (run_id, points, map_id))
+                "insert into previews (run_id, points, map_id, checked, loc_map, x, y, loc, v)"
+                " values (?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)"
+                " on conflict(run_id) do update set points=excluded.points, map_id=excluded.map_id, checked=excluded.checked,"
+                " loc_map=excluded.loc_map, x=excluded.x, y=excluded.y, loc=excluded.loc, v=excluded.v",
+                (run_id, points, map_id, loc_map, x, y, loc, PREVIEW_VERSION))
             self.db.commit()
+
+    def tests_on_map(self, core, map_id=None):
+        sql = """
+            with latest as (
+                select r.*, row_number() over (partition by core, test order by ts desc, id desc) rn from runs r where core=?
+            )
+            select l.id, l.test, l.verdict, l.ts, l.host, p.loc_map map, p.x, p.y, p.loc, p.points
+            from latest l join previews p on p.run_id=l.id
+            where l.rn=1 and p.loc_map is not null
+        """
+        args = [core]
+        if map_id is not None:
+            sql += " and p.loc_map=?"
+            args.append(map_id)
+        return self.query(sql, args)
 
     def run(self, run_id):
         return self.one("select * from runs where id=?", (run_id,))

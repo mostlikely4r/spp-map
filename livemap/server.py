@@ -163,6 +163,9 @@ class Handler(BaseHTTPRequestHandler):
             kinds = set(q["kinds"].split(",")) if q.get("kinds") else None
             map_id = int(q["map"]) if q.get("map", "") not in ("", "world") else None
             return self.send_json(app.live_events(q["core"], map_id, min(int(q.get("seconds", 1800)), 86400), kinds))
+        if method == "GET" and name == "tests/where":
+            map_id = int(q["map"]) if q.get("map", "") not in ("", "world") else None
+            return self.send_json(cat.tests_on_map(q["core"], map_id))
         if method == "GET" and name == "live/intents":
             seconds = min(int(q.get("seconds", 900)), 86400)
             if q.get("map", "") == "world":
