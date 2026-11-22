@@ -86,6 +86,7 @@ class App:
         self.last_ingest = None
         self.listeners = []
         self.overlay_cache = {}
+        self.known_cache = {}
 
     def client_dir(self, name):
         core = self.cfg.cores.get(name)
@@ -130,7 +131,20 @@ class App:
         names = ctx.basemaps.map_names()
         for m in snap["maps"]:
             m["name"] = names.get(m["id"], f"map {m['id']}")
+        snap["known"] = self.known_maps(core)
         return snap
+
+    def known_maps(self, core):
+        cached = self.known_cache.get(core)
+        if cached is not None:
+            return cached
+        ctx = self.cores[core]
+        names = ctx.basemaps.map_names()
+        ids = overlay.spawned_maps(ctx) | {m for m in overlay.CONTINENT_OFFSETS if m in ctx.basemaps.map_dirs()}
+        rows = [{"id": m, "name": names.get(m, f"map {m}")} for m in sorted(ids)]
+        rows = [r for r in rows if not overlay.SKIP_NAME.search(r["name"] or "")]
+        self.known_cache[core] = rows
+        return rows
 
     def bot_card(self, core, guid):
         ctx = self.cores[core]
@@ -156,20 +170,25 @@ class App:
         self.overlay_cache[core] = ((mode, sig), result)
         return result
 
-    def scene_offsets(self, core, mode, honest):
+    def scene_offsets(self, core, mode, honest, focus=None, dungeons=True):
         ov = self.overlay(core, mode)
+        base = (0.0, 0.0)
+        if focus is not None:
+            base = next((c["off"] for c in ov["continents"] if c["id"] == focus), base)
         out = {}
-        for item in ov["continents"] + ov["instances"]:
+        for item in ov["continents"] + (ov["instances"] if dungeons else []):
             if item.get("tray"):
                 continue
+            if focus is not None and item["id"] != focus and item.get("root") != focus:
+                continue
             off = (item.get("off_honest") or item["off"]) if honest else item["off"]
-            out[item["id"]] = off
+            out[item["id"]] = [off[0] - base[0], off[1] - base[1]]
         return out
 
-    def scene_layer(self, core, kind, mode, honest, bounds, kinds=None):
+    def scene_layer(self, core, kind, mode, honest, bounds, kinds=None, focus=None, dungeons=True):
         ctx = self.cores[core]
         out = {"scene": True, "maps": [], "features": [], "bins": [], "links": [], "nodes": [], "total": 0, "binned": False}
-        for map_id, off in sorted(self.scene_offsets(core, mode, honest).items()):
+        for map_id, off in sorted(self.scene_offsets(core, mode, honest, focus, dungeons).items()):
             b = {"top": bounds["top"] - off[0], "bottom": bounds["bottom"] - off[0],
                  "left": bounds["left"] - off[1], "right": bounds["right"] - off[1]}
             if b["bottom"] > b["top"] or b["right"] > b["left"]:

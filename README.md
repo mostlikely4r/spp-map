@@ -51,6 +51,12 @@ What works today:
   anchored by hand (`livemap/overlay.py`, `ANCHORS`): Ebon Hold over the Scarlet Enclave, the old
   Alliance PVP Barracks at Stormwind, both without door markers.
 
+  **Continent pages use the same view.** Eastern Kingdoms, Kalimdor, Outland and Northrend each open as
+  this scene limited to one continent: the painted continent and zone maps (or the ground), with that
+  continent's dungeons on top, the same layers and options, plus the rendered ground when zoomed in.
+  A **dungeons** layer chip turns the overlay off (here and in the World view). The map selector lists
+  the World view, then every map with bots (most bots first), then all other maps by map id.
+
   `python -m livemap verify --scene world` reports, per instance, where the entrance came from
   (continent trigger / chained off another instance / hand anchor / override / tray), whether the
   inside landing point falls on the instance's own art, its cluster, and whether any placement in
@@ -69,7 +75,8 @@ What works today:
   (soft / medium / strong / flat) and a "detailed ground" on/off chip in the map's layer drawer, and a
   Settings section for the cache, the shading default, worker count and client folders. Buildings
   (world models placed in the terrain) are drawn on top of the ground, so towns read as towns and the
-  terrain holes are filled by the building instead of the minimap doodle. See
+  terrain holes are filled by the building instead of the minimap doodle. A **buildings + caves** chip in the ground controls turns them off to show the bare terrain (tiles
+  are requested with `bld=0` and cached separately). See
   [Ground (terrain) layer](#ground-terrain-layer).
 
 - **One button for the controls.** The live map keeps the map itself full-screen: a single floating

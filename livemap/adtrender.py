@@ -40,6 +40,7 @@ SHADING = {
     "flat": {"light": None, "amb": 1.00, "k": 0.00, "lo": 1.00, "hi": 1.00, "sh": 0.00},
 }
 SHADE_NAMES = ("soft", "medium", "strong", "flat")
+NO_BUILDINGS = "-nobld"
 
 WATER_COLOUR = {
     "water": (0.16, 0.30, 0.36),
@@ -604,10 +605,11 @@ class Renderer:
         adt = self.adt(col, row, directory)
         if adt is None:
             return None
-        preset = SHADING.get(shade) or SHADING["soft"]
+        bare = shade.endswith(NO_BUILDINGS)
+        preset = SHADING.get(shade[:-len(NO_BUILDINGS)] if bare else shade) or SHADING["soft"]
         pad = padded_heights(self, directory, col, row)
         buildings = None
-        placements = neighbour_placements(self, directory, col, row)
+        placements = None if bare else neighbour_placements(self, directory, col, row)
         if placements:
             left = GRID_YD - col * ADT_YD
             top = GRID_YD - row * ADT_YD
@@ -969,7 +971,7 @@ class Terrain:
             threading.Thread(target=renderer.prefetch, args=(job[2], job[3], job[4]),
                              daemon=True, name="adt-prefetch").start()
 
-    def tile(self, core_name, map_id, z, x, y, shade=None):
+    def tile(self, core_name, map_id, z, x, y, shade=None, buildings=True):
         grabbed = tile_coords(int(z), int(x), int(y))
         if grabbed is None or core_name not in self.cfg.cores:
             return None
@@ -978,6 +980,8 @@ class Terrain:
         if not info:
             return None
         shade = shade if shade in SHADING else self.store.shade()
+        if not buildings:
+            shade += NO_BUILDINGS
         image = self.image(core_name, info, shade, col, row)
         if image is None:
             return None

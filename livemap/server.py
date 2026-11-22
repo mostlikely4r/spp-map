@@ -175,7 +175,9 @@ class Handler(BaseHTTPRequestHandler):
                 kinds = set(q.get("kinds", "").split(",")) - {""}
                 mode = "sea" if q.get("mode") == "sea" else "real"
                 honest = q.get("honest") == "1"
-                return self.send_json(app.scene_layer(q["core"], q["kind"], mode, honest, bounds, kinds))
+                focus = int(q["focus"]) if q.get("focus", "").lstrip("-").isdigit() else None
+                return self.send_json(app.scene_layer(q["core"], q["kind"], mode, honest, bounds, kinds,
+                                                      focus=focus, dungeons=q.get("dungeons") != "0"))
             if q["kind"] == "nodes":
                 return self.send_json(ctx.world.travel_nodes(int(q["map"]), bounds))
             if q["kind"] == "zonelevels":
@@ -233,8 +235,9 @@ class Handler(BaseHTTPRequestHandler):
         core, map_id, z, x = parts[2], parts[4], parts[5], parts[6]
         y = parts[7].split(".", 1)[0]
         try:
-            data = self.app.terrain.tile(core, int(map_id), int(z), int(x), int(y),
-                                         parse_qs(urlparse(self.path).query).get("shade", [None])[0])
+            query = parse_qs(urlparse(self.path).query)
+            data = self.app.terrain.tile(core, int(map_id), int(z), int(x), int(y), query.get("shade", [None])[0],
+                                         query.get("bld", ["1"])[0] != "0")
         except (TypeError, ValueError):
             return self.send_text(404, "bad tile path")
         if not data:
