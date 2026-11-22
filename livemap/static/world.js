@@ -48,16 +48,36 @@ function placeOf(map) {
   return (W.place && W.place[map]) || null;
 }
 
+function placed(p, x, y) {
+  if (!p.rot) return [x + p.off[0], y + p.off[1]];
+  const c = Math.cos(p.rot), s = Math.sin(p.rot);
+  return [x * c - y * s + p.off[0], x * s + y * c + p.off[1]];
+}
+
 function bpos(map, x, y) {
   if (!worldScene()) return ll(x, y);
   const p = placeOf(map);
-  return p ? ll(x + p.off[0], y + p.off[1]) : null;
+  if (!p) return null;
+  const [sx, sy] = placed(p, x, y);
+  return ll(sx, sy);
+}
+
+function placedBox(p, b) {
+  if (!p) return b;
+  const [cx, cy] = placed(p, (b.top + b.bottom) / 2, (b.left + b.right) / 2);
+  const hx = Math.abs(b.top - b.bottom) / 2, hy = Math.abs(b.left - b.right) / 2;
+  const c = Math.abs(Math.cos(p.rot || 0)), s = Math.abs(Math.sin(p.rot || 0));
+  const ex = hx * c + hy * s, ey = hx * s + hy * c;
+  return { top: cx + ex, bottom: cx - ex, left: cy + ey, right: cy - ey };
 }
 
 function mapBox(m) {
-  const p = placeOf(m.id);
-  const e = m.extent;
-  return { top: e.top + p.off[0], bottom: e.bottom + p.off[0], left: e.left + p.off[1], right: e.right + p.off[1] };
+  return placedBox(placeOf(m.id), m.extent);
+}
+
+function turnParam(mapId) {
+  const p = placeOf(mapId);
+  return p && p.rot ? 'turn=' + (p.rot * 180 / Math.PI).toFixed(1) : '';
 }
 
 function applyPlace() {
@@ -72,16 +92,15 @@ function applyPlace() {
     if (W.on.dungeons && W.art === 'minimap') for (const i of ov.instances) {
       if (W.focus !== null && (i.tray || i.root !== W.focus)) continue;
       const honest = W.honest || i.fan === false;
-      place[i.id] = { off: rel(honest ? (i.off_honest || i.off) : i.off), inst: i };
+      if (W.honest && W.turn && i.turn !== undefined && i.turn !== null) place[i.id] = { off: rel(i.off_turn), rot: i.turn, inst: i };
+      else place[i.id] = { off: rel(honest ? (i.off_honest || i.off) : i.off), inst: i };
     }
   }
   W.place = place;
 }
 
 function offBox(mapId, b) {
-  const p = placeOf(mapId);
-  const o = p ? p.off : [0, 0];
-  return imgBounds({ top: b.top + o[0], bottom: b.bottom + o[0], left: b.left + o[1], right: b.right + o[1] });
+  return imgBounds(placedBox(placeOf(mapId), b));
 }
 
 function paintedContinent(id) {
@@ -176,6 +195,7 @@ async function worldPage(core, mapId) {
   const mode = q0.get('place');
   W.placeMode = mode === 'sea' || mode === 'real' ? mode : (store('wplace') || 'real');
   W.honest = q0.has('honest') ? q0.get('honest') === '1' : store('whonest') === '1';
+  W.turn = q0.has('turn') ? q0.get('turn') === '1' : store('wturn') === '1';
   W.plain = q0.has('plain') ? q0.get('plain') === '1' : store('wplain') === '1';
   W.ov = await wapi(`overlay?core=${W.core}&mode=${W.placeMode}`);
   W.scene = W.map === 'world' || W.ov.continents.some(c => c.id === W.map);
@@ -255,7 +275,9 @@ async function worldPage(core, mapId) {
     } }, PLACE_MODES.map(([v, l]) => el('option', { value: v, selected: v === W.placeMode ? 'selected' : null }, l)));
     W.honestChip = el('span', { class: 'chip' + (W.honest ? ' on' : ''), onclick: () => setScene({ honest: !W.honest }) }, 'honest (stack at doors)');
     W.plainChip = el('span', { class: 'chip' + (W.plain ? ' on' : ''), onclick: () => setScene({ plain: !W.plain }) }, 'plain art (no borders)');
-    sceneBlock.append(el('div', { class: 'wdtitle' }, 'Dungeons on the map'), placeSelect, el('div', { class: 'chips' }, W.honestChip, W.plainChip));
+    W.turnChip = el('span', { class: 'chip' + (W.turn ? ' on' : '') + (W.honest ? '' : ' hidden'), title: 'turn each dungeon so the way you walk in matches its entrance',
+      onclick: () => setScene({ turn: !W.turn }) }, 'turn to match entrances');
+    sceneBlock.append(el('div', { class: 'wdtitle' }, 'Dungeons on the map'), placeSelect, el('div', { class: 'chips' }, W.honestChip, W.turnChip, W.plainChip));
   }
   W.ui = { mapSelect, chips, status, legendBox, sheet, styleRow, npcSelect, pathSelect, terrainTag, terrainRow,
     drawer, backdrop, badge, ground, styleBox, sceneBlock, layersBtn, fab: document.querySelector('.wfab') };
@@ -595,12 +617,15 @@ function setScene(patch) {
   Object.assign(W, patch);
   if ('honest' in patch) store('whonest', W.honest ? '1' : '0');
   if ('plain' in patch) store('wplain', W.plain ? '1' : '0');
+  if ('turn' in patch) store('wturn', W.turn ? '1' : '0');
   const u = new URL(location.href);
   u.searchParams.set('honest', W.honest ? '1' : '0');
   u.searchParams.set('plain', W.plain ? '1' : '0');
+  u.searchParams.set('turn', W.turn ? '1' : '0');
   history.replaceState({}, '', u.pathname + u.search);
   if (W.honestChip) W.honestChip.classList.toggle('on', W.honest);
   if (W.plainChip) W.plainChip.classList.toggle('on', W.plain);
+  if (W.turnChip) { W.turnChip.classList.toggle('on', W.turn); W.turnChip.classList.toggle('hidden', !W.honest); }
   rebuildScene();
 }
 
@@ -655,8 +680,9 @@ function drawScene() {
     }
     const open = ev => { L.DomEvent.stop(ev); go(`/w/${W.core}/${m.id}`); };
     const model = m.model && W.art === 'minimap' && terrainPrefs().detailed ? m.model : null;
-    if (model) inst.img = L.imageOverlay(`/basemap/${W.core}/${model.key}.webp?v=${model.v}`, offBox(m.id, model.bounds), { pane: 'instimg', interactive: true }).on('click', open).addTo(W.layers.base);
-    else if (m.base) inst.img = L.imageOverlay(`/basemap/${W.core}/${m.base.key}.webp`, box, { pane: 'instimg', interactive: true }).on('click', open).addTo(W.layers.base);
+    const turn = turnParam(m.id);
+    if (model) inst.img = L.imageOverlay(`/basemap/${W.core}/${model.key}.webp?v=${model.v}${turn ? '&' + turn : ''}`, offBox(m.id, model.bounds), { pane: 'instimg', interactive: true }).on('click', open).addTo(W.layers.base);
+    else if (m.base) inst.img = L.imageOverlay(`/basemap/${W.core}/${m.base.key}.webp${turn ? '?' + turn : ''}`, turn ? offBox(m.id, m.base.bounds) : box, { pane: 'instimg', interactive: true }).on('click', open).addTo(W.layers.base);
     else inst.plain = L.rectangle(box, { color: '#576574', weight: 1, fill: false, interactive: true }).on('click', open).addTo(W.layers.base);
     W.inst.push(inst);
   }
@@ -666,10 +692,10 @@ function drawScene() {
     const c = KIND_COLORS[m.kind] || KIND_COLORS.other;
     for (const [door, land] of m.links) {
       const d = ll(door[0] - bx, door[1] - by), l = ll(land[0] - bx, land[1] - by);
-      if (m.moved || Math.hypot(door[0] - land[0], door[1] - land[1]) > 30)
+      if (!W.honest && (m.moved || Math.hypot(door[0] - land[0], door[1] - land[1]) > 30))
         L.polyline([d, l], { color: c, weight: 2, opacity: 0.85, dashArray: '6 6', interactive: false }).addTo(W.layers.base);
       L.circleMarker(d, { radius: 4, color: '#000', weight: 1, fillColor: c, fillOpacity: 1, interactive: false }).addTo(W.layers.base);
-      L.circleMarker(l, { radius: 3, color: c, weight: 1, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(W.layers.base);
+      if (!W.honest) L.circleMarker(l, { radius: 3, color: c, weight: 1, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(W.layers.base);
     }
   }
   W.base = W.focus !== null && placeOf(W.focus) ? { bounds: mapBox(W.atlas.find(m => m.id === W.focus)) } : null;
@@ -1098,6 +1124,7 @@ async function loadViewportLayer(key) {
   const q = new URLSearchParams({ core: W.core, map: apiMap(), kind, ...b });
   if (worldScene()) {
     q.set('mode', W.placeMode); q.set('honest', W.honest ? '1' : '0'); q.set('dungeons', W.on.dungeons ? '1' : '0');
+    if (W.honest && W.turn) q.set('turn', '1');
     if (W.focus !== null) q.set('focus', W.focus);
   }
   const d = await wapi('layer?' + q.toString());

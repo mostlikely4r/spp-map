@@ -7,6 +7,8 @@ from . import wmomap
 from .clientdata import as_float, read_dbc
 from .layers import file_sig
 
+TURN_REACH = 80.0
+TURN_MIN = 2.0
 CONTINENT_OFFSETS = {0: (0.0, 0.0), 1: (-3680.0, 13670.0), 530: (15000.0, -20000.0), 571: (10000.0, 5000.0)}
 KINDS = {1: "dungeon", 2: "raid", 3: "battleground", 4: "arena"}
 
@@ -130,6 +132,34 @@ def doors_by_map(world, dbc_path):
         out.setdefault(int(tmap), []).append({"id": int(tid), "map": src[0], "x": src[1], "y": src[2],
                                               "lx": float(tx), "ly": float(ty)})
     return out
+
+
+def exits_by_map(world, dbc_path):
+    recs, _ = read_dbc(dbc_path)
+    triggers = {r[0]: (r[1], as_float(r[2]), as_float(r[3])) for r in recs}
+    out = {}
+    for tid, tmap, tx, ty in world.rows("SELECT id, target_map, target_position_x, target_position_y FROM areatrigger_teleport"):
+        src = triggers.get(tid)
+        if not src or src[0] == tmap:
+            continue
+        out.setdefault(int(src[0]), []).append({"ix": src[1], "iy": src[2], "map": int(tmap), "ox": float(tx), "oy": float(ty)})
+    return out
+
+
+def entrance_turn(door, exits):
+    if door.get("lx") is None:
+        return None
+    near = [e for e in exits if e["map"] == door["map"]
+            and math.hypot(e["ox"] - door["x"], e["oy"] - door["y"]) <= TURN_REACH
+            and math.hypot(e["ix"] - door["lx"], e["iy"] - door["ly"]) <= TURN_REACH]
+    if not near:
+        return None
+    e = min(near, key=lambda e: math.hypot(e["ox"] - door["x"], e["oy"] - door["y"]) + math.hypot(e["ix"] - door["lx"], e["iy"] - door["ly"]))
+    if math.hypot(door["x"] - e["ox"], door["y"] - e["oy"]) < TURN_MIN or math.hypot(door["lx"] - e["ix"], door["ly"] - e["iy"]) < TURN_MIN:
+        return None
+    walk_out = math.atan2(door["y"] - e["oy"], door["x"] - e["ox"])
+    walk_in = math.atan2(door["ly"] - e["iy"], door["lx"] - e["ix"])
+    return (walk_out - walk_in + math.pi) % (2 * math.pi) - math.pi
 
 
 def map_kinds(dbc_path):
@@ -259,6 +289,7 @@ def build(ctx, mode, pick_base, overrides=None):
     kinds = map_kinds(bm.dbc_path("Map"))
     overrides = load_anchors(ctx) if overrides is None else overrides
     doors = doors_by_map(ctx.world, bm.dbc_path("AreaTrigger"))
+    exits = exits_by_map(ctx.world, bm.dbc_path("AreaTrigger"))
     for map_id, anchor in ANCHORS.items():
         if map_id in kinds and map_id not in doors:
             doors[map_id] = [{"id": 0, "map": m, "x": x, "y": y, "lx": None, "ly": None,
@@ -358,6 +389,14 @@ def build(ctx, mode, pick_base, overrides=None):
                                "base": c["base"], "model": c.get("model"), "extent": c["extent"], "moved": bool(dx or dy),
                                "links": [] if bare else [[list(a), list(b)] for a, b in zip(door_pts, landings)],
                                "tray": False, "source": source_of(used, parent), "fan": c["fan"]}
+            turn = entrance_turn(used[0], exits.get(c["id"], [])) if parent is None and used else None
+            if turn is not None:
+                d0 = used[0]
+                co0 = CONTINENT_OFFSETS[d0["map"]]
+                ct, st = math.cos(turn), math.sin(turn)
+                placed[c["id"]]["turn"] = turn
+                placed[c["id"]]["off_turn"] = [d0["x"] + co0[0] - (d0["lx"] * ct - d0["ly"] * st),
+                                               d0["y"] + co0[1] - (d0["lx"] * st + d0["ly"] * ct)]
         if not rest or len(rest) == len(pending):
             pending = rest
             break

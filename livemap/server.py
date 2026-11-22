@@ -77,6 +77,12 @@ class Handler(BaseHTTPRequestHandler):
                 ctx = self.app.cores.get(core)
                 if not ctx:
                     file = None
+                elif name.endswith(".webp") and parse_qs(urlparse(self.path).query).get("turn"):
+                    try:
+                        deg = float(parse_qs(urlparse(self.path).query)["turn"][0])
+                    except ValueError:
+                        deg = 0.0
+                    file = self.app.turned_image(core, name[:-5], deg)
                 elif name.startswith("model_") and name.endswith(".webp") and name[6:-5].isdigit():
                     file = self.app.terrain.model_image(core, int(name[6:-5]))
                 elif name.endswith(".webp"):
@@ -179,7 +185,8 @@ class Handler(BaseHTTPRequestHandler):
                 honest = q.get("honest") == "1"
                 focus = int(q["focus"]) if q.get("focus", "").lstrip("-").isdigit() else None
                 return self.send_json(app.scene_layer(q["core"], q["kind"], mode, honest, bounds, kinds,
-                                                      focus=focus, dungeons=q.get("dungeons") != "0"))
+                                                      focus=focus, dungeons=q.get("dungeons") != "0",
+                                                      turn=q.get("turn") == "1"))
             if q["kind"] == "nodes":
                 return self.send_json(ctx.world.travel_nodes(int(q["map"]), bounds))
             if q["kind"] == "zonelevels":

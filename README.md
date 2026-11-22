@@ -55,6 +55,10 @@ What works today:
   their real places. Placement does not depend on the boot, so a restart never moves anything. Where
   several instances share one entrance they are fanned out with leader lines; **honest mode** stacks
   them at their doors instead and puts a chip row on the cluster to pick which art is on top.
+  In honest mode, **turn to match entrances** rotates each dungeon about its landing point so the way
+  you walk in inside matches the way you walk into the door outside (from the entrance and exit
+  trigger positions, not the often-unset orientations); bots, trails and every layer inside it turn
+  with it, and the server rotates the art (`?turn=<deg>`, cached under `data/turned`).
   **Plain art** drops the dark backdrop and the coloured outline. Zoomed out, each instance collapses
   to a pin with the number of bots inside. Every layer works here too, merged over the visible maps:
   NPCs, game objects, travel nodes and their walking paths, travel intent, teleport cache, zone

@@ -1,9 +1,12 @@
 import collections
+import math
 import os
 from dataclasses import replace
 from datetime import datetime, timedelta
 import threading
 import time
+
+from PIL import Image
 
 from . import telemetry
 from .adtrender import Terrain
@@ -18,6 +21,7 @@ from .worlddb import WorldDb
 MARGIN = 0.35
 SCENE_LIMIT = 600
 SCENE_NODES = 240
+TURN_MAX_PX = 4096
 FOCUS_NODES = 4000
 SCENE_PATH_SPAN = 10000
 
@@ -191,6 +195,37 @@ class App:
         self.warm_models(core, [i["id"] for i in result["instances"] if i.get("model")])
         return result
 
+    def turned_image(self, core, key, deg):
+        ctx = self.cores.get(core)
+        if ctx is None:
+            return None
+        if key.startswith("model_") and key[6:].isdigit():
+            src = self.terrain.model_image(core, int(key[6:]))
+            entry = self.terrain.model_entry(core, int(key[6:]))
+            bounds = entry["bounds"] if entry else None
+        else:
+            src = ctx.basemaps.image_for_key(key)
+            entry = ctx.basemaps.entry_by_key(key)
+            bounds = ctx.basemaps.describe(entry)["bounds"] if entry else None
+        if not src or not bounds:
+            return None
+        deg = round(deg, 1)
+        safe = lambda v: "".join(ch if ch.isalnum() or ch in "_-." else "_" for ch in str(v))
+        path = os.path.join(self.cfg.data_dir, "turned", safe(core), f"{safe(key)}_{deg:+.1f}.webp")
+        if os.path.exists(path) and os.path.getmtime(path) >= os.path.getmtime(src):
+            return path
+        img = Image.open(src).convert("RGBA")
+        w_yd = abs(bounds["left"] - bounds["right"])
+        h_yd = abs(bounds["top"] - bounds["bottom"])
+        k = min(max(img.width / w_yd, img.height / h_yd), TURN_MAX_PX / max(w_yd, h_yd))
+        img = img.resize((max(1, round(w_yd * k)), max(1, round(h_yd * k))), Image.BILINEAR)
+        out = img.rotate(deg, resample=Image.BICUBIC, expand=True)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        out.save(tmp, "WEBP", quality=88, method=4)
+        os.replace(tmp, path)
+        return path
+
     def warm_models(self, core, map_ids):
         def run():
             for map_id in map_ids:
@@ -200,7 +235,7 @@ class App:
                     print("model render failed:", core, map_id, exc)
         threading.Thread(target=run, daemon=True, name="model-warm").start()
 
-    def scene_offsets(self, core, mode, honest, focus=None, dungeons=True):
+    def scene_offsets(self, core, mode, honest, focus=None, dungeons=True, turn=False):
         ov = self.overlay(core, mode)
         base = (0.0, 0.0)
         if focus is not None:
@@ -211,16 +246,19 @@ class App:
                 continue
             if focus is not None and item["id"] != focus and item.get("root") != focus:
                 continue
-            off = (item.get("off_honest") or item["off"]) if honest else item["off"]
-            out[item["id"]] = [off[0] - base[0], off[1] - base[1]]
+            angle = 0.0
+            if honest and turn and item.get("turn") is not None:
+                off, angle = item["off_turn"], item["turn"]
+            else:
+                off = (item.get("off_honest") or item["off"]) if honest else item["off"]
+            out[item["id"]] = (off[0] - base[0], off[1] - base[1], angle)
         return out
 
-    def scene_layer(self, core, kind, mode, honest, bounds, kinds=None, focus=None, dungeons=True):
+    def scene_layer(self, core, kind, mode, honest, bounds, kinds=None, focus=None, dungeons=True, turn=False):
         ctx = self.cores[core]
         out = {"scene": True, "maps": [], "features": [], "bins": [], "links": [], "nodes": [], "total": 0, "binned": False}
-        for map_id, off in sorted(self.scene_offsets(core, mode, honest, focus, dungeons).items()):
-            b = {"top": bounds["top"] - off[0], "bottom": bounds["bottom"] - off[0],
-                 "left": bounds["left"] - off[1], "right": bounds["right"] - off[1]}
+        for map_id, off in sorted(self.scene_offsets(core, mode, honest, focus, dungeons, turn).items()):
+            b = local_bounds(bounds, off)
             if b["bottom"] > b["top"] or b["right"] > b["left"]:
                 continue
             if kind in ("creatures", "objects"):
@@ -382,6 +420,21 @@ class App:
             if best is None or score > best[1]:
                 best = (map_id, score)
         return (best[0], "guess") if best and best[1] else (None, None)
+
+
+def local_bounds(bounds, place):
+    ox, oy, angle = place
+    if not angle:
+        return {"top": bounds["top"] - ox, "bottom": bounds["bottom"] - ox,
+                "left": bounds["left"] - oy, "right": bounds["right"] - oy}
+    c, s = math.cos(-angle), math.sin(-angle)
+    xs, ys = [], []
+    for x in (bounds["top"], bounds["bottom"]):
+        for y in (bounds["left"], bounds["right"]):
+            dx, dy = x - ox, y - oy
+            xs.append(dx * c - dy * s)
+            ys.append(dx * s + dy * c)
+    return {"top": max(xs), "bottom": min(xs), "left": max(ys), "right": min(ys)}
 
 
 def pick_base(basemaps):
