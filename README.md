@@ -54,7 +54,10 @@ What works today:
   **Continent pages use the same view.** Eastern Kingdoms, Kalimdor, Outland and Northrend each open as
   this scene limited to one continent: the painted continent and zone maps (or the ground), with that
   continent's dungeons on top, the same layers and options, plus the rendered ground when zoomed in.
-  A **dungeons** layer chip turns the overlay off (here and in the World view). The map selector lists
+  Every map has one **Map style** switch: **painted** (painted continent/zone/floor art, with a zone maps
+  option; in the World view the painted continents are masked to their land shape so they do not
+  overlap) or **minimap** (minimap art, with options for dungeons on maps that have entrances, real
+  terrain when zoomed in, which the World view composes per continent, and interiors). The map selector lists
   the World view, then every map with bots (most bots first), then all other maps by map id.
 
   `python -m livemap verify --scene world` reports, per instance, where the entrance came from

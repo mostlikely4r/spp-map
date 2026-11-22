@@ -455,4 +455,4 @@ function boundsOf(d) {
   return { top: Math.max(...xs) + 200, bottom: Math.min(...xs) - 200, left: Math.max(...ys) + 200, right: Math.min(...ys) - 200 };
 }
 
-route();
+window.addEventListener('DOMContentLoaded', route);
