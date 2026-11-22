@@ -142,3 +142,88 @@ def box_in_view(bbox_min, bbox_max, position, rotation, scale, left, top, yard_p
     px = (left - wy) / yard_px
     py = (top - wx) / yard_px
     return not (px.max() < -8 or py.max() < -8 or px.min() > size + 8 or py.min() > size + 8)
+
+
+def adt_doodads(data):
+    parts = chunks(data)
+    if "MDDF" not in parts or "MMDX" not in parts:
+        return []
+    names_off, names_size = parts["MMDX"][0]
+    names = data[names_off:names_off + names_size]
+    offsets = []
+    if "MMID" in parts:
+        mid_off, mid_size = parts["MMID"][0]
+        offsets = list(struct.unpack_from(f"<{mid_size // 4}I", data, mid_off))
+    ddf_off, ddf_size = parts["MDDF"][0]
+    out = []
+    for i in range(ddf_size // 36):
+        name_id, uid, px, py, pz, ra, rb, rc, scale, _ = struct.unpack_from("<II3f3fHH", data, ddf_off + i * 36)
+        if name_id >= len(offsets):
+            continue
+        name = cstring(names, offsets[name_id])
+        if name:
+            out.append((uid, name, (px, py, pz), (ra, rb, rc), (scale / 1024.0) if scale else 1.0))
+    return out
+
+
+def m2_array(data, offset):
+    return struct.unpack_from("<2I", data, offset)
+
+
+def parse_m2(data, skin=None):
+    if not data or len(data) < 200 or data[:4] != b"MD20":
+        return None
+    version = struct.unpack_from("<I", data, 4)[0]
+    legacy = version < 264
+    count, start = m2_array(data, 68 if legacy else 60)
+    if not count or start + count * 48 > len(data):
+        return None
+    raw = np.frombuffer(data, np.uint8, count * 48, start).reshape(count, 48)
+    verts = np.ascontiguousarray(raw[:, 0:12]).view("<f4").reshape(count, 3).astype(np.float32)
+    uvs = np.ascontiguousarray(raw[:, 32:40]).view("<f4").reshape(count, 2).astype(np.float32)
+    n_tex, tex_ofs = m2_array(data, 92 if legacy else 80)
+    textures = []
+    for i in range(min(n_tex, 64)):
+        kind, _, length, name_ofs = struct.unpack_from("<4I", data, tex_ofs + i * 16)
+        textures.append(data[name_ofs:name_ofs + max(0, length - 1)].decode("latin-1") if kind == 0 and length > 1 else "")
+    n_look, look_ofs = m2_array(data, 148 if legacy else 128)
+    lookup_tex = list(struct.unpack_from(f"<{n_look}H", data, look_ofs)) if n_look else []
+    if legacy:
+        n_views, view_ofs = m2_array(data, 76)
+        if not n_views:
+            return None
+        view, base, sub_size = data, view_ofs, 32
+    else:
+        if not skin or skin[:4] != b"SKIN":
+            return None
+        view, base, sub_size = skin, 4, 48
+    n_vl, vl_ofs = m2_array(view, base)
+    n_ix, ix_ofs = m2_array(view, base + 8)
+    n_sub, sub_ofs = m2_array(view, base + 24)
+    n_bat, bat_ofs = m2_array(view, base + 32)
+    if not n_vl or not n_ix:
+        return None
+    local = np.frombuffer(view, "<u2", n_vl, vl_ofs).astype(np.int32)
+    index = np.frombuffer(view, "<u2", n_ix, ix_ofs).astype(np.int32)
+    tris, tex = [], []
+    for b in range(n_bat):
+        at = bat_ofs + b * 24
+        section, = struct.unpack_from("<H", view, at + 4)
+        layer, = struct.unpack_from("<H", view, at + 12)
+        combo, = struct.unpack_from("<H", view, at + 16)
+        if layer != 0 or section >= n_sub:
+            continue
+        level, _, _, first, total = struct.unpack_from("<5H", view, sub_ofs + section * sub_size + 2)
+        first += level << 16
+        part = index[first:first + total]
+        part = part[:len(part) // 3 * 3]
+        if not len(part):
+            continue
+        part = local[np.clip(part, 0, n_vl - 1)].reshape(-1, 3)
+        part = part[np.all(part < count, axis=1)]
+        tris.append(part)
+        slot = lookup_tex[combo] if combo < len(lookup_tex) else -1
+        tex.append(np.full(len(part), slot if 0 <= slot < len(textures) else -1, np.int32))
+    if not tris:
+        return None
+    return {"verts": verts, "uvs": uvs, "tris": np.concatenate(tris), "tex": np.concatenate(tex), "textures": textures}

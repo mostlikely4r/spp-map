@@ -23,6 +23,7 @@ class Core:
     locale: str = "enUS"
     bot_conf: str = ""
     mangosd_conf: str = ""
+    mmap_config: str = ""
 
 
 @dataclass
@@ -99,6 +100,9 @@ def load(path):
         conf = resolve(base, entry.get("mangosd_conf") or (spp_root and os.path.join(spp_root, "Settings", name, "mangosd.conf")))
         bot_conf = resolve(base, entry.get("aiplayerbot_conf") or (spp_root and os.path.join(spp_root, "Settings", name, "aiplayerbot.conf")))
         db = parse_db_info(entry["world_db"]) if entry.get("world_db") else read_world_db(conf)
+        tree = {"vanilla": "mangos-classic", "tbc": "mangos-tbc", "wotlk": "mangos-wotlk"}.get(name, "")
+        mmap = resolve(base, entry.get("mmap_config") or (spp_root and tree and os.path.join(
+            spp_root, "builds", tree, "contrib", "extractor_scripts", "config.json")))
         cfg.cores[name] = Core(
             name=name,
             logs=logs,
@@ -108,6 +112,7 @@ def load(path):
             locale=entry.get("locale", "enUS"),
             bot_conf=bot_conf,
             mangosd_conf=conf,
+            mmap_config=mmap if mmap and os.path.exists(mmap) else "",
         )
     return cfg
 

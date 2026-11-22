@@ -1,4 +1,5 @@
 import io
+import json
 import math
 import os
 import re
@@ -22,7 +23,7 @@ REPEATS = 8
 TILE_PX = 256
 MIN_LEVEL = -1
 MAX_LEVEL = 1
-RENDER_VERSION = 5
+RENDER_VERSION = 6
 CHUNK_YD = ADT_YD / 16
 APRON_PX = ADT_PX + 128
 
@@ -37,6 +38,11 @@ BUILD_BATCH = 1500000
 BUILD_STEP = 1.5
 BUILD_EDGE = 0.6
 BUILD_TEX_PX = 32
+DOODAD_MIN_UP = 0.05
+CUTOUT_ALPHA = 0.5
+SLOPE_DEFAULT = 60.0
+SLOPE_WARN = 10.0
+SWIM_DEPTH = 2.03128
 
 SHADING = {
     "soft": {"light": (-0.30, -0.40, 0.87), "amb": 0.60, "k": 0.45, "lo": 0.50, "hi": 1.10, "sh": 0.15},
@@ -47,7 +53,8 @@ SHADING = {
 SHADE_NAMES = ("soft", "medium", "strong", "flat")
 NO_BUILDINGS = "-nobld"
 INSIDE = "-inside"
-VARIANT = re.compile(r"^([a-z]+)(-nobld|-inside)?(?:-cut(-?\d+))?$")
+VARIANT = re.compile(r"^([a-z]+)(-nobld|-inside)?(-notrees)?(?:-cut(-?\d+))?$")
+NO_TREES = "-notrees"
 WMO_MIN_LEVEL = -4
 MODEL_CELL_PX = 512
 MODEL_MAX_CELLS = 49
@@ -63,7 +70,7 @@ WATER_COLOUR = {
 
 MISSING = object()
 SAFE = re.compile(r"[^a-z0-9_.-]+")
-SKIP_ARCHIVES = re.compile(r"^(sound|speech|fonts|item|dbc|interface|misc|backup|model)", re.I)
+SKIP_ARCHIVES = re.compile(r"^(sound|speech|fonts|item|dbc|interface|misc|backup)", re.I)
 
 
 class Lru:
@@ -117,7 +124,7 @@ class Chunk:
 
 
 class Adt:
-    __slots__ = ("col", "row", "textures", "chunks", "hf", "placements", "valid", "bytes")
+    __slots__ = ("col", "row", "textures", "chunks", "hf", "placements", "doodads", "valid", "bytes")
 
 
 def upsample_matrix(n_in, n_out):
@@ -190,6 +197,10 @@ def parse_adt(data, col, row, big_alpha=False, liquid_kinds=None):
         adt.placements = wmomodel.adt_placements(data)
     except struct.error:
         adt.placements = []
+    try:
+        adt.doodads = wmomodel.adt_doodads(data)
+    except struct.error:
+        adt.doodads = []
     adt.valid = bool(adt.chunks)
     adt.bytes = sum(c.heights.nbytes + sum(a.nbytes for _, a in c.layers if a is not None)
                     + (c.shadow.nbytes if c.shadow is not None else 0) for c in adt.chunks)
@@ -417,6 +428,59 @@ def render_adt(adt, textures, preset, pad, buildings=None):
     return Image.fromarray(out, "RGBA")
 
 
+def render_overlay(renderer, adt, directory, col, row, kind):
+    out = np.zeros((ADT_PX, ADT_PX, 4), np.uint8)
+    if kind.startswith("slope"):
+        try:
+            limit = float(kind[5:]) if kind[5:] else SLOPE_DEFAULT
+        except ValueError:
+            limit = SLOPE_DEFAULT
+        heights = relief_field(padded_heights(renderer, directory, col, row))
+        if heights is None:
+            return None
+        gy, gx = np.gradient(heights, CHUNK_YD / PPC)
+        angle = np.degrees(np.arctan(np.hypot(gx, gy)))
+        steep = angle >= limit
+        near = (angle >= limit - SLOPE_WARN) & ~steep
+        out[near] = (255, 170, 40, 110)
+        out[steep] = (230, 40, 40, 170)
+        for chunk in adt.chunks:
+            if chunk.holes:
+                block = PPC // 4
+                y0, x0 = chunk.iy * PPC, chunk.ix * PPC
+                for bit in range(16):
+                    if chunk.holes & (1 << bit):
+                        hy, hx = bit // 4, bit % 4
+                        out[y0 + hy * block:y0 + (hy + 1) * block, x0 + hx * block:x0 + (hx + 1) * block] = 0
+    elif kind == "swim":
+        for chunk in adt.chunks:
+            liquid = chunk.liquid
+            if liquid is None:
+                continue
+            y0, x0 = chunk.iy * PPC, chunk.ix * PPC
+            terrain = np.concatenate([chunk.heights[r * 17:r * 17 + 9] for r in range(9)]).reshape(9, 9)
+            depth = HEIGHT_UP @ (liquid["height"] - terrain) @ HEIGHT_UP.T
+            show = np.repeat(np.repeat(liquid["show"], PPC // 8, axis=0), PPC // 8, axis=1)
+            deep = show & (depth > SWIM_DEPTH)
+            wade = show & (depth > 0) & ~deep
+            block = out[y0:y0 + PPC, x0:x0 + PPC]
+            if liquid["kind"] in ("magma", "slime"):
+                colour = (255, 80, 0, 180) if liquid["kind"] == "magma" else (120, 210, 0, 180)
+                block[wade | deep] = colour
+            else:
+                block[wade] = (120, 220, 255, 90)
+                block[deep] = (20, 90, 255, 150)
+    else:
+        return None
+    if not out[:, :, 3].any():
+        return None
+    return Image.fromarray(out, "RGBA")
+
+
+def opaque(tile):
+    return np.concatenate([tile, np.ones(tile.shape[:2] + (1,), np.float32)], axis=2)
+
+
 def render_wmo_only(renderer, placements, left, top, inside, cut):
     rgb, covered = draw_buildings(renderer, placements, left, top, inside, cut)
     if not covered.any():
@@ -427,7 +491,46 @@ def render_wmo_only(renderer, placements, left, top, inside, cut):
     return Image.fromarray(out, "RGBA")
 
 
-def draw_buildings(renderer, placements, left, top, inside=False, cut=None):
+def add_doodads(renderer, doodads, left, top, yard_px, size, atlas, slots, batches):
+    seen = set()
+    for uid, name, position, rotation, scale in doodads:
+        if uid in seen:
+            continue
+        seen.add(uid)
+        model = renderer.m2_model(name)
+        if model is None:
+            continue
+        wx, wy, wz = wmomodel.transform(model["verts"], position, rotation, scale)
+        px = ((left - wy) / yard_px).astype(np.float32)
+        py = ((top - wx) / yard_px).astype(np.float32)
+        if px.max() < 0 or py.max() < 0 or px.min() > size or py.min() > size:
+            continue
+        tris = model["tris"]
+        a, b, c = tris[:, 0], tris[:, 1], tris[:, 2]
+        e1 = np.stack([wx[b] - wx[a], wy[b] - wy[a], wz[b] - wz[a]], axis=1)
+        e2 = np.stack([wx[c] - wx[a], wy[c] - wy[a], wz[c] - wz[a]], axis=1)
+        normal = np.cross(e1, e2)
+        upness = np.abs(normal[:, 2]) / (np.linalg.norm(normal, axis=1) + 1e-6)
+        keep = upness > DOODAD_MIN_UP
+        if not keep.any():
+            continue
+        sel = np.nonzero(keep)[0]
+        tex = np.empty(sel.size, np.int32)
+        for t_index in set(model["tex"][sel].tolist()):
+            name_t = model["textures"][t_index] if 0 <= t_index < len(model["textures"]) else ""
+            key = ("m2", name_t)
+            slot = slots.get(key)
+            if slot is None:
+                slot = slots[key] = len(atlas)
+                atlas.append(renderer.m2_texture(name_t))
+            tex[model["tex"][sel] == t_index] = slot
+        t = tris[sel]
+        batches.append((px[t], py[t], wz[t].astype(np.float32), model["uvs"][t], tex,
+                        (BUILD_AMBIENT + (1.0 - BUILD_AMBIENT) * upness[sel]).astype(np.float32),
+                        np.ones(sel.size, bool)))
+
+
+def draw_buildings(renderer, placements, left, top, inside=False, cut=None, doodads=None):
     yard_px = CHUNK_YD / PPC
     size = ADT_PX
     zbuf = np.full(size * size, -np.inf, np.float32)
@@ -435,7 +538,9 @@ def draw_buildings(renderer, placements, left, top, inside=False, cut=None):
     atlas, slots = [], {}
     batches = []
     seen = set()
-    for uid, name, position, rotation, scale in placements:
+    if doodads:
+        add_doodads(renderer, doodads, left, top, yard_px, size, atlas, slots, batches)
+    for uid, name, position, rotation, scale in placements or ():
         mark = (name.lower(), uid)
         if mark in seen:
             continue
@@ -478,15 +583,16 @@ def draw_buildings(renderer, placements, left, top, inside=False, cut=None):
             tex = np.empty(sel.size, np.int32)
             for mat in set(mats[sel].tolist()):
                 name_t = textures[mat] if mat < len(textures) else ""
-                slot = slots.get(name_t)
+                slot = slots.get(("wmo", name_t))
                 if slot is None:
-                    slot = slots[name_t] = len(atlas)
-                    atlas.append(renderer.wmo_texture(name_t))
+                    slot = slots[("wmo", name_t)] = len(atlas)
+                    atlas.append(opaque(renderer.wmo_texture(name_t)))
                 tex[mats[sel] == mat] = slot
             t = tris[sel]
             lift = INSIDE_LIFT if inside and group.get("flags", 0) & INTERIOR_GROUP else 0.0
             batches.append((px[t], py[t], wz[t].astype(np.float32) + lift, uvs[t], tex,
-                            (BUILD_AMBIENT + (1.0 - BUILD_AMBIENT) * upness[sel]).astype(np.float32)))
+                            (BUILD_AMBIENT + (1.0 - BUILD_AMBIENT) * upness[sel]).astype(np.float32),
+                            np.zeros(sel.size, bool)))
     if not batches:
         return np.zeros((size, size, 3), np.float32), np.zeros((size, size), bool)
     tex_atlas = np.stack(atlas)
@@ -497,6 +603,7 @@ def draw_buildings(renderer, placements, left, top, inside=False, cut=None):
     UV = np.concatenate([bt[3] for bt in batches])
     TEX = np.concatenate([bt[4] for bt in batches])
     LIGHT = np.concatenate([bt[5] for bt in batches])
+    CUTOUT = np.concatenate([bt[6] for bt in batches])
     x0 = np.clip(np.floor(X.min(axis=1)), 0, size - 1).astype(np.int64)
     x1 = np.clip(np.ceil(X.max(axis=1)), 0, size - 1).astype(np.int64)
     y0 = np.clip(np.floor(Y.min(axis=1)), 0, size - 1).astype(np.int64)
@@ -531,22 +638,28 @@ def draw_buildings(renderer, placements, left, top, inside=False, cut=None):
         if not inside.any():
             continue
         tri, cx, cy, l0, l1, l2 = tri[inside], cx[inside], cy[inside], l0[inside], l1[inside], l2[inside]
+        u = l0 * UV[tri, 0, 0] + l1 * UV[tri, 1, 0] + l2 * UV[tri, 2, 0]
+        v = l0 * UV[tri, 0, 1] + l1 * UV[tri, 1, 1] + l2 * UV[tri, 2, 1]
+        su = (np.mod(u, 1.0) * tsize).astype(np.int32) % tsize
+        sv = (np.mod(v, 1.0) * tsize).astype(np.int32) % tsize
+        texel = tex_atlas[TEX[tri], sv, su]
+        solid = ~CUTOUT[tri] | (texel[:, 3] >= CUTOUT_ALPHA)
+        if not solid.all():
+            tri, cx, cy, l0, l1, l2, texel = tri[solid], cx[solid], cy[solid], l0[solid], l1[solid], l2[solid], texel[solid]
+            if not tri.size:
+                continue
         z = l0 * Z[tri, 0] + l1 * Z[tri, 1] + l2 * Z[tri, 2]
         pix = cy * size + cx
         rank = np.lexsort((z, pix))
-        pix, z, tri, l0, l1, l2 = pix[rank], z[rank], tri[rank], l0[rank], l1[rank], l2[rank]
+        pix, z, tri, texel = pix[rank], z[rank], tri[rank], texel[rank]
         last = np.ones(pix.size, bool)
         last[:-1] = pix[1:] != pix[:-1]
         win = last & (z > zbuf[pix])
         if not win.any():
             continue
-        pix, z, tri, l0, l1, l2 = pix[win], z[win], tri[win], l0[win], l1[win], l2[win]
-        u = l0 * UV[tri, 0, 0] + l1 * UV[tri, 1, 0] + l2 * UV[tri, 2, 0]
-        v = l0 * UV[tri, 0, 1] + l1 * UV[tri, 1, 1] + l2 * UV[tri, 2, 1]
-        su = (np.mod(u, 1.0) * tsize).astype(np.int32) % tsize
-        sv = (np.mod(v, 1.0) * tsize).astype(np.int32) % tsize
+        pix, z, tri, texel = pix[win], z[win], tri[win], texel[win]
         zbuf[pix] = z
-        rgb[pix] = tex_atlas[TEX[tri], sv, su] * LIGHT[tri, None]
+        rgb[pix] = texel[:, :3] * LIGHT[tri, None]
     covered = np.isfinite(zbuf).reshape(size, size)
     data = rgb.reshape(size, size, 3)
     height = np.where(covered, zbuf.reshape(size, size), -1e9)
@@ -683,6 +796,39 @@ class Renderer:
         self.wmo_groups.put(key, group)
         return group
 
+    def m2_model(self, name):
+        key = (self.key, "m2", name.lower())
+        hit = self.wmo_groups.get(key)
+        if hit is not MISSING:
+            return hit
+        base = os.path.splitext(name)[0]
+        data = self.archives.read(base + ".m2") or self.archives.read(name)
+        model = None
+        if data and len(data) > 8:
+            skin = None
+            if struct.unpack_from("<I", data, 4)[0] >= 264:
+                skin = self.archives.read(base + "00.skin")
+            try:
+                model = wmomodel.parse_m2(data, skin)
+            except (struct.error, ValueError, IndexError):
+                model = None
+        self.wmo_groups.put(key, model)
+        return model
+
+    def m2_texture(self, texture):
+        key = (self.key, "m2tex", texture.lower())
+        hit = self.wmo_pixels.get(key)
+        if hit is not MISSING:
+            return hit
+        image = self.archives.image(texture) if texture else None
+        if image is None:
+            tile = np.concatenate([np.full((BUILD_TEX_PX, BUILD_TEX_PX, 3), (0.22, 0.32, 0.16), np.float32),
+                                   np.ones((BUILD_TEX_PX, BUILD_TEX_PX, 1), np.float32)], axis=2)
+        else:
+            tile = np.asarray(image.convert("RGBA").resize((BUILD_TEX_PX, BUILD_TEX_PX), Image.BOX), np.float32) / 255.0
+        self.wmo_pixels.put(key, tile)
+        return tile
+
     def wmo_texture(self, texture):
         key = (self.key, texture.lower())
         hit = self.wmo_pixels.get(key)
@@ -784,13 +930,19 @@ class Renderer:
         hit = self.images.get(key)
         if hit is not MISSING:
             return hit
+        if shade.startswith("ov-"):
+            adt = self.adt(col, row, directory)
+            image = render_overlay(self, adt, directory, col, row, shade[3:]) if adt is not None else None
+            self.images.put(key, image)
+            return image
         adt = self.adt(col, row, directory)
         if adt is None and not self.global_wmo(directory):
             return None
         m = VARIANT.match(shade) or VARIANT.match("soft")
         bare = m.group(2) == NO_BUILDINGS
         inside = m.group(2) == INSIDE
-        cut = float(m.group(3)) if m.group(3) is not None else None
+        trees = m.group(3) != NO_TREES
+        cut = float(m.group(4)) if m.group(4) is not None else None
         left = GRID_YD - col * ADT_YD
         top = GRID_YD - row * ADT_YD
         if adt is None:
@@ -801,8 +953,9 @@ class Renderer:
         pad = padded_heights(self, directory, col, row)
         buildings = None
         placements = None if bare else neighbour_placements(self, directory, col, row)
-        if placements:
-            drawn = draw_buildings(self, placements, left, top, inside, cut)
+        doodads = neighbour_doodads(self, directory, col, row) if trees else None
+        if placements or doodads:
+            drawn = draw_buildings(self, placements, left, top, inside, cut, doodads)
             if drawn[1].any():
                 buildings = drawn
         image = render_adt(adt, self.textures, preset, pad, buildings)
@@ -817,6 +970,16 @@ def neighbour_placements(renderer, directory, col, row):
             adt = renderer.adt(col + dx, row + dy, directory)
             if adt is not None and adt.placements:
                 out.extend(adt.placements)
+    return out
+
+
+def neighbour_doodads(renderer, directory, col, row):
+    out = []
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            adt = renderer.adt(col + dx, row + dy, directory)
+            if adt is not None and adt.doodads:
+                out.extend(adt.doodads)
     return out
 
 
@@ -995,14 +1158,13 @@ class Terrain:
             "tex": Lru(max_bytes=TEXTURE_MB * 1024 * 1024, sizer=lambda a: a.nbytes),
             "wmo": Lru(max_items=128, sizer=lambda root: 2048),
             "wmogroup": Lru(max_bytes=WMO_MB * 1024 * 1024,
-                            sizer=lambda g: (g["verts"].nbytes + g["tris"].nbytes + g["mats"].nbytes
-                                             + (g["uvs"].nbytes if g["uvs"] is not None else 0)
-                                             + 4096) if g else 256),
+                            sizer=lambda g: sum(v.nbytes for v in g.values() if isinstance(v, np.ndarray)) + 4096 if g else 256),
             "wmocol": Lru(max_items=2048, sizer=lambda c: 64),
             "wmopix": Lru(max_bytes=8 * 1024 * 1024, sizer=lambda a: a.nbytes),
         }
         self.executor = self.new_executor()
         self.model_locks = {}
+        self.mmap_configs = {}
 
     def model_entry(self, core_name, map_id):
         try:
@@ -1218,7 +1380,21 @@ class Terrain:
             threading.Thread(target=renderer.prefetch, args=(job[2], job[3], job[4]),
                              daemon=True, name="adt-prefetch").start()
 
-    def tile(self, core_name, map_id, z, x, y, shade=None, buildings="roofs", cut=None):
+    def slope_limit(self, core_name, map_id):
+        core = self.cfg.cores.get(core_name)
+        path = core.mmap_config if core else ""
+        if path not in self.mmap_configs:
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    self.mmap_configs[path] = json.load(fh)
+            except (OSError, ValueError):
+                self.mmap_configs[path] = {}
+        entry = self.mmap_configs[path].get(str(int(map_id)))
+        if isinstance(entry, dict) and isinstance(entry.get("walkableSlopeAngle"), (int, float)):
+            return float(entry["walkableSlopeAngle"])
+        return SLOPE_DEFAULT
+
+    def tile(self, core_name, map_id, z, x, y, shade=None, buildings="roofs", cut=None, trees=True, overlay=None):
         grabbed = tile_coords(int(z), int(x), int(y))
         if grabbed is None or core_name not in self.cfg.cores:
             return None
@@ -1227,11 +1403,17 @@ class Terrain:
         if not info:
             return None
         shade = shade if shade in SHADING else self.store.shade()
-        if buildings == "off":
+        if overlay == "slope":
+            shade = f"ov-slope{int(self.slope_limit(core_name, map_id))}"
+        elif overlay == "swim":
+            shade = "ov-swim"
+        elif buildings == "off":
             shade += NO_BUILDINGS
         elif buildings == "inside":
             shade += INSIDE
-        if cut is not None:
+        if not trees and not overlay:
+            shade += NO_TREES
+        if cut is not None and not overlay:
             shade += f"-cut{int(cut)}"
         image = self.image(core_name, info, shade, col, row)
         if image is None:

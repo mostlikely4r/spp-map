@@ -11,7 +11,7 @@ const ROLE_COLORS = { flightmaster: '#ffe066', innkeeper: '#ff9f43', auctioneer:
 const INTENT_COLORS = { quest: '#ffd200', 'trainer class': '#a29bfe', 'trainer trade': '#a29bfe', 'trainer mount': '#a29bfe', Bank: '#c8d6e5', AH: '#c8d6e5', Mail: '#c8d6e5',
   Repair: '#8395a7', Vendor: '#8395a7', GatherFishing: '#48dbfb', GatherSkinning: '#e17055', GatherMining: '#b2bec3', GatherHerbalism: '#55efc4',
   Grind: '#ff6b6b', pvp: '#ff3f34', city: '#fab1a0', GenericRpg: '#fd79a8' };
-const DEFAULT_LAYERS = { dungeons: true, tests: false, bots: true, names: false, zones: true, labels: true, events: true, intents: false, npcs: false, objects: false, nodes: false, tele: false, zonelv: false };
+const DEFAULT_LAYERS = { dungeons: true, tests: false, steep: false, swim: false, bots: true, names: false, zones: true, labels: true, events: true, intents: false, npcs: false, objects: false, nodes: false, tele: false, zonelv: false };
 const GO_COLORS = { chest: '#feca57', questgiver: '#ffd200', mailbox: '#c8d6e5', meetingstone: '#a29bfe', fishinghole: '#48dbfb', door: '#576574', generic: '#8395a7' };
 const EVENT_STYLE = { death: ['#e6463c', 'died'], levelup: ['#ffd200', 'level up'], quest: ['#3cdc5a', 'quest'], pvp: ['#ff6b6b', 'pvp'],
   trade: ['#1dd1a1', 'trade'], gear: ['#a29bfe', 'gear'], revive: ['#a0f0ff', 'revived'], kill: ['#ff9f43', 'kill'], group: ['#48dbfb', 'group'],
@@ -123,7 +123,7 @@ function stopWorld() {
   W.timer = W.slowTimer = null;
   W.markers.clear(); W.selected = null; W.trail = null; W.layers = null; W.fitted = false; W.viewApplied = false;
   W.zoneLabels = null; W.zoneLevels = null; W.place = null; W.ov = null; W.inst = []; W.top = {}; W.counts = {};
-  W.cut = null; W.sceneGround = null; W.scene = false; W.focus = null; W.map = null; W.cont = {}; W.base0 = [0, 0]; W.mapSig = null;
+  W.cut = null; W.overlays = {}; W.sceneGround = null; W.scene = false; W.focus = null; W.map = null; W.cont = {}; W.base0 = [0, 0]; W.mapSig = null;
   document.body.classList.remove('worldmode');
 }
 
@@ -290,6 +290,8 @@ async function worldPage(core, mapId) {
   mapObj.getPane('zoneimg').style.zIndex = 342;
   mapObj.createPane('terrain');
   mapObj.getPane('terrain').style.zIndex = 350;
+  mapObj.createPane('ovl');
+  mapObj.getPane('ovl').style.zIndex = 352;
   mapObj.createPane('instback');
   mapObj.getPane('instback').style.zIndex = 355;
   mapObj.createPane('instimg');
@@ -304,10 +306,10 @@ async function worldPage(core, mapId) {
   W.terrain = mountTerrain(mapObj, W.core, W.map, terrainInfo(),
     () => (terrainInfo().wmo && terrainInfo().extent ? imgBounds(terrainInfo().extent) : W.base && W.base.bounds ? imgBounds(W.base.bounds) : null),
     { chips: terrainRow, tag: terrainTag, allow: () => W.art === 'minimap',
-      onInfo: fresh => { if (W.info) W.info.terrain_render = fresh; drawBase(); renderStyle(); } });
+      onInfo: fresh => { if (W.info) W.info.terrain_render = fresh; drawBase(); renderStyle(); syncOverlays(); } });
   renderStyle();
   for (const [key, label] of [['bots', 'bots'], ['names', 'names'], ['labels', worldScene() ? 'zone + map names' : 'zone names'], ['zonelv', 'zone levels'], ['events', 'deaths / quests / levels'],
-    ['intents', 'travel intent'], ['tests', 'tests run here'], ['npcs', 'NPCs'], ['objects', 'objects'], ['nodes', 'travel nodes'], ['tele', 'teleport cache']]) {
+    ['intents', 'travel intent'], ['tests', 'tests run here'], ['steep', 'too steep to walk'], ['swim', 'swimming water'], ['npcs', 'NPCs'], ['objects', 'objects'], ['nodes', 'travel nodes'], ['tele', 'teleport cache']]) {
     const chip = el('span', { class: 'chip' + (W.on[key] ? ' on' : '') }, label);
     chip.onclick = () => {
       W.on[key] = !W.on[key]; chip.classList.toggle('on', W.on[key]); wSaveLayers();
@@ -319,7 +321,7 @@ async function worldPage(core, mapId) {
   updateLayerBadge();
   for (const key of Object.keys(W.on)) applyLayer(key);
   mapObj.on('moveend', debounce(() => { refreshViewportLayers(); updateZones(); updateNames(); updateZoneLevelLabels(); updateLod(); updateClusterChips(); saveView(); }, 400));
-  mapObj.on('zoomend', debounce(() => { updateLod(); updateClusterChips(); if (W.terrain) W.terrain.sync(); syncSceneGround(); }, 150));
+  mapObj.on('zoomend', debounce(() => { updateLod(); updateClusterChips(); if (W.terrain) W.terrain.sync(); syncSceneGround(); syncOverlays(); }, 150));
   mapObj.on('click', () => { closeSheet(); setDrawer(false); });
   ingestSnapshot(await wapi(`live?core=${W.core}&map=${apiMap()}`));
   const want = new URLSearchParams(location.search).get('bot');
@@ -367,6 +369,7 @@ function renderStyle() {
       'draw the ground from the client terrain files when zoomed in'));
     for (const [v, label, hint] of BUILDING_MODES)
       opts.append(chip(label, p.bld === v, () => { store('wbld', v); groundChanged(); }, hint));
+    opts.append(chip('trees + props', p.trees, () => { store('wtrees', p.trees ? '0' : '1'); groundChanged(); }, 'trees, rocks and other props on the real terrain'));
   }
   box.append(opts);
   if (mm && p.detailed)
@@ -401,6 +404,24 @@ function setCut(v) {
   renderStyle();
   if (W.terrain) W.terrain.sync();
   redrawBots();
+}
+
+function syncOverlays() {
+  if (!mapObj || !W.layers) return;
+  W.overlays = W.overlays || {};
+  const info = terrainInfo();
+  for (const [key, kind] of [['steep', 'slope'], ['swim', 'swim']]) {
+    const want = W.on[key] && !allWorld() && info.available && !info.wmo && mapObj.getZoom() >= info.min_zoom;
+    const have = W.overlays[key];
+    if (want && !have) {
+      W.overlays[key] = L.tileLayer(`/tiles/${W.core}/adt/${W.map}/{z}/{x}/{y}.webp?v=${info.version}&ov=${kind}`, {
+        tileSize: 256, minNativeZoom: info.min_zoom, maxNativeZoom: info.max_zoom, minZoom: mapObj.getMinZoom(), maxZoom: mapObj.getMaxZoom(),
+        noWrap: true, keepBuffer: 2, pane: 'ovl', updateWhenIdle: false }).addTo(mapObj);
+    } else if (!want && have) {
+      mapObj.removeLayer(have);
+      delete W.overlays[key];
+    }
+  }
 }
 
 function toggleOption(key) {
@@ -500,13 +521,13 @@ function terrainPrefs(info) {
   let shade = store('wshade');
   if (!TERRAIN_SHADES.includes(shade)) shade = TERRAIN_SHADES.includes(spec.shade) ? spec.shade : 'soft';
   const detailed = store('wdetail');
-  return { shade, detailed: detailed === null || detailed === undefined ? true : detailed === '1', bld: ['0', '1', '2'].includes(store('wbld')) ? store('wbld') : '1',
+  return { shade, detailed: detailed === null || detailed === undefined ? true : detailed === '1', bld: ['0', '1', '2'].includes(store('wbld')) ? store('wbld') : '1', trees: store('wtrees') !== '0',
     cut: spec.wmo && W.map !== null && W.cut !== null && W.cut !== undefined ? W.cut : null };
 }
 
-function terrainKey(prefs) { return prefs.shade + '-' + prefs.bld + '-' + prefs.cut; }
+function terrainKey(prefs) { return prefs.shade + '-' + prefs.bld + '-' + prefs.trees + '-' + prefs.cut; }
 
-function bldParam(prefs) { return (prefs.bld === '1' ? '' : '&bld=' + prefs.bld) + (prefs.cut === null || prefs.cut === undefined ? '' : '&cut=' + prefs.cut); }
+function bldParam(prefs) { return (prefs.bld === '1' ? '' : '&bld=' + prefs.bld) + (prefs.trees ? '' : '&trees=0') + (prefs.cut === null || prefs.cut === undefined ? '' : '&cut=' + prefs.cut); }
 
 function terrainUrl(core, mapId, info, prefs) {
   return `/tiles/${core}/adt/${mapId}/{z}/{x}/{y}.webp?v=${info.version}&shade=${prefs.shade}${bldParam(prefs)}`;
@@ -540,6 +561,7 @@ function fillTerrainChips(row, info, sync) {
     'draw the ground from the client terrain files instead of the minimap'));
   for (const [v, label, hint] of BUILDING_MODES)
     row.append(chip(label, prefs.bld === v, () => store('wbld', v), hint));
+  row.append(chip('trees + props', prefs.trees, () => store('wtrees', prefs.trees ? '0' : '1'), 'trees, rocks and other props on the rendered ground'));
   for (const name of TERRAIN_SHADES)
     row.append(chip(name, prefs.shade === name, () => store('wshade', name), 'ground shading preset'));
 }
@@ -934,6 +956,7 @@ function applyLayer(key) {
   styleVisibility();
   if (key === 'names') return updateNames();
   if (key === 'dungeons') return;
+  if (key === 'steep' || key === 'swim') { syncOverlays(); legend(); return; }
   if (!layer) return;
   if (W.on[key]) {
     layer.addTo(mapObj);
@@ -1046,6 +1069,8 @@ function legend() {
   if (W.color === 'state') box.append(item('#3cdc5a', 'active'), item('#ff3b3b', 'combat'), item('#9a9a9a', 'dead'), item('#ffd200', 'flying'), item('#ff46c8', 'test'), item('#4b5563', 'inactive'));
   if (W.color === 'hp') box.append(item('hsl(0,85%,50%)', '0%'), item('hsl(60,85%,50%)', '50%'), item('hsl(120,85%,50%)', '100%'));
   box.append(el('span', {}, el('span', { class: 'dot', style: 'background:#888;border:2px solid #fff' }), 'real player'));
+  if (W.on.steep) box.append(item('rgba(255,170,40,0.7)', 'nearly too steep'), item('rgba(230,40,40,0.8)', 'too steep to walk'));
+  if (W.on.swim) box.append(item('rgba(120,220,255,0.6)', 'wading'), item('rgba(20,90,255,0.8)', 'swimming'), item('#ff5000', 'lava'), item('#78d200', 'slime'));
   if (W.on.tests) for (const [k, c] of Object.entries(VERDICT_COLORS)) box.append(el('span', {}, el('span', { class: 'dot', style: `background:transparent;border:3px solid ${c}` }), 'test ' + k.toLowerCase()));
   if (W.on.events) for (const k of ['death', 'levelup', 'quest']) box.append(el('span', {}, el('span', { class: 'dot sq', style: `background:${EVENT_STYLE[k][0]}` }), EVENT_STYLE[k][1]));
 }

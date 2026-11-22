@@ -180,7 +180,17 @@ the same (`data/access_token.txt`; delete it to issue a new one).
   triangles are projected top-down: bounding-box culling per placement and group, up-facing and
   area filters per triangle, big triangles filled in depth order, small ones splatted and dilated,
   colour sampled from the material texture at the triangle's UV. Roofs get a slope shade and the
-  silhouette a dark outline so a town reads at a glance. Trees, doodads and M2 props are still R4.
+  silhouette a dark outline so a town reads at a glance.
+- **Trees and props (R4):** each ADT's `MDDF` doodads (from the 3x3 neighbourhood, de-duplicated by
+  id) are loaded as M2 models (vanilla/TBC inline views, WotLK `.skin` files), transformed like
+  buildings and drawn by the same textured rasterizer with alpha-tested leaf cards. A **trees + props**
+  chip turns them off (`trees=0`, own cache key). The client's `model` archive is now opened for this.
+- **Bot overlays (R4):** **too steep to walk** (terrain slope at or above the mmap
+  `walkableSlopeAngle`, 60 degrees by default, per-map overrides read from the core's
+  `contrib/extractor_scripts/config.json` or `mmap_config` in livemap.toml; orange 10 degrees below
+  it) and **swimming water** (water deeper than the 2.03 yd collision height where bots swim, lighter
+  where they wade; lava and slime marked). Served as `...webp?ov=slope|swim` tiles on single maps and
+  continent pages.
 - **Settings** (`/settings`, section "Map", stored in `data/livemap.sqlite`): keep cache on/off, cache
   size cap with current usage, delete the saved cache (all cores or one), default shading, render
   workers, fallback on/off and order, and the client `Data` folder per core with a check button
