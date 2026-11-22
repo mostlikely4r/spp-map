@@ -199,6 +199,8 @@ async function worldPage(core, mapId) {
   if (lp !== null) { const want = new Set(lp.split(',')); for (const k of Object.keys(W.on)) W.on[k] = want.has(k); }
   document.body.classList.add('worldmode');
   view.textContent = '';
+  const waiting = el('div', { class: 'notice wloading' }, 'Preparing the map. The very first start builds the map art from your game client and can take a few minutes; later starts are quick.');
+  view.append(waiting);
   const first = await wapi('live' + (core ? '?core=' + encodeURIComponent(core) : ''));
   W.core = first.core;
   try { applyCaps(await wapi(`capabilities?core=${encodeURIComponent(W.core)}`)); } catch (e) { applyCaps(null); }
@@ -283,6 +285,7 @@ async function worldPage(core, mapId) {
       el('button', { class: 'ghost wdrawer-done', onclick: () => setDrawer(false) }, 'done')),
     drawerBody);
   const backdrop = el('div', { class: 'wdrawer-backdrop hidden', onclick: () => setDrawer(false) });
+  waiting.remove();
   add(el('div', { class: 'wmapwrap' }, mapDiv, status, terrainTag, sheet, backdrop, drawer,
     el('div', { class: 'wfab' }, layersBtn)));
   if (worldScene()) {
