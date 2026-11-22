@@ -238,8 +238,13 @@ def cmd_demo(args):
     mimetypes.add_type("image/webp", ".webp")
     mimetypes.add_type("application/javascript", ".js")
     root = os.path.abspath(args.dir or demo_dir())
-    if not os.path.isfile(os.path.join(root, "index.html")):
+    if not os.path.isfile(os.path.join(root, "data", "live.json")):
         sys.exit(f"no demo export in {root} (make one with: python -m livemap export-static --out {root})")
+    from .export import write_site
+    try:
+        write_site(root)
+    except OSError as exc:
+        print(f"could not refresh the web client in {root} ({exc}); showing the copy from the export")
 
     class Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *a, **kw):
@@ -250,7 +255,7 @@ def cmd_demo(args):
 
         def send_head(self):
             path = self.translate_path(self.path)
-            if not os.path.exists(path):
+            if not os.path.exists(path) and not os.path.splitext(self.path.split("?", 1)[0])[1]:
                 self.path = "/index.html"
             return super().send_head()
 

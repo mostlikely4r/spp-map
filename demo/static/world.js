@@ -215,7 +215,7 @@ async function worldPage(core, mapId) {
   const mode = q0.get('place');
   W.placeMode = mode === 'sea' || mode === 'real' ? mode : (store('wplace') || 'real');
   W.honest = q0.has('honest') ? q0.get('honest') === '1' : store('whonest') === '1';
-  W.turn = !LM.demo && (q0.has('turn') ? q0.get('turn') === '1' : store('wturn') === '1');
+  W.turn = LM.mode !== 'static' && (q0.has('turn') ? q0.get('turn') === '1' : store('wturn') === '1');
   W.plain = q0.has('plain') ? q0.get('plain') === '1' : store('wplain') === '1';
   W.ov = await wapi(`overlay?core=${W.core}&mode=${W.placeMode}`);
   W.scene = W.map === 'world' || W.ov.continents.some(c => c.id === W.map);
@@ -296,7 +296,7 @@ async function worldPage(core, mapId) {
     } }, PLACE_MODES.map(([v, l]) => el('option', { value: v, selected: v === W.placeMode ? 'selected' : null }, l)));
     W.honestChip = el('span', { class: 'chip' + (W.honest ? ' on' : ''), onclick: () => setScene({ honest: !W.honest }) }, 'honest (stack at doors)');
     W.plainChip = el('span', { class: 'chip' + (W.plain ? ' on' : ''), onclick: () => setScene({ plain: !W.plain }) }, 'plain art (no borders)');
-    W.turnChip = el('span', { class: 'chip' + (W.turn ? ' on' : '') + (W.honest && !LM.demo ? '' : ' hidden'), title: 'turn each dungeon so the way you walk in matches its entrance',
+    W.turnChip = el('span', { class: 'chip' + (W.turn ? ' on' : '') + (W.honest && LM.mode !== 'static' ? '' : ' hidden'), title: 'turn each dungeon so the way you walk in matches its entrance',
       onclick: () => setScene({ turn: !W.turn }) }, 'turn to match entrances');
     sceneBlock.append(el('div', { class: 'wdtitle' }, 'Dungeons on the map'), placeSelect, el('div', { class: 'chips' }, W.honestChip, W.turnChip, W.plainChip));
   }
@@ -343,7 +343,7 @@ async function worldPage(core, mapId) {
     };
     chips.append(chip);
   }
-  if (W.hidden.size && !LM.demo) {
+  if (W.hidden.size && LM.mode !== 'static') {
     const first = [...W.hidden].find(k => k !== 'tests') || [...W.hidden][0];
     chips.after(el('div', { class: 'wdmore' }, el('a', { href: `/help#layer-${W.core}-${first}`, 'data-link': 1 },
       `${W.hidden.size} more layer${W.hidden.size === 1 ? '' : 's'} available here — how?`)));
@@ -677,7 +677,7 @@ function setScene(patch) {
   history.replaceState({}, '', u.pathname + u.search);
   if (W.honestChip) W.honestChip.classList.toggle('on', W.honest);
   if (W.plainChip) W.plainChip.classList.toggle('on', W.plain);
-  if (W.turnChip) { W.turnChip.classList.toggle('on', W.turn); W.turnChip.classList.toggle('hidden', !W.honest || LM.demo); }
+  if (W.turnChip) { W.turnChip.classList.toggle('on', W.turn); W.turnChip.classList.toggle('hidden', !W.honest || LM.mode === 'static'); }
   rebuildScene();
 }
 

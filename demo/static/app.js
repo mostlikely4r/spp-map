@@ -39,6 +39,7 @@ function el(tag, attrs, ...kids) {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
     if (k === 'class') n.className = v;
+    else if (k === 'href' && typeof v === 'string' && v.startsWith('/') && attrs['data-link']) n.setAttribute(k, LM.base + v);
     else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
     else if (v !== null && v !== undefined && v !== false) n.setAttribute(k, v);
   }
@@ -678,8 +679,8 @@ async function runPage(id) {
     el('h1', {}, verdict(r.verdict), ' ', prettyTest(r.test)),
     el('div', { class: 'sub' }, `${r.core} · ${r.ts} · host ${r.host}${r.elapsed_s ? ' · ' + r.elapsed_s + ' s' : ''}`),
     el('div', { class: 'msg' }, r.msg),
-    el('div', { class: 'sub' }, el('a', { href: testLink(r.core, r.test), 'data-link': 1 }, 'test history'), LM.demo ? null : ' · ',
-      LM.demo ? null : el('a', { href: asset(`/snapshot/run/${id}.png`), target: '_blank' }, 'snapshot image')),
+    el('div', { class: 'sub' }, el('a', { href: testLink(r.core, r.test), 'data-link': 1 }, 'test history'), LM.mode === 'static' ? null : ' · ',
+      LM.mode === 'static' ? null : el('a', { href: asset(`/snapshot/run/${id}.png`), target: '_blank' }, 'snapshot image')),
     d.quest && !d.quest.error ? el('div', { class: 'sub' }, `quest ${d.quest.id}: ${d.quest.title}`) : null,
     ...(d.notice || []).map(n => el('div', { class: 'notice' }, n)),
     d.record ? recordBlock(d.record) : null,

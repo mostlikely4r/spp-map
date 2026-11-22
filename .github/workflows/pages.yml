@@ -3,7 +3,7 @@ name: GitHub Pages (demo)
 on:
   push:
     branches: [main]
-    paths: ["demo/**", "livemap/static/**", "livemap/export.py", ".github/workflows/pages.yml"]
+    paths: ["demo/**", "livemap/static/**", "livemap/export.py", "livemap/__main__.py", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:

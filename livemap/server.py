@@ -18,6 +18,7 @@ class Server(ThreadingHTTPServer):
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 PAGE_ROUTES = re.compile(r"^/($|r/\d+$|t/[^/]+/.+$|flips$|clusters$|test$|tests$|help$|settings$|w$|w/.*$)")
 COOKIE = "lm_token"
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -30,13 +31,23 @@ class Handler(BaseHTTPRequestHandler):
     def is_remote(self):
         h = self.headers
         return bool(h.get("Cf-Connecting-Ip") or h.get("X-Forwarded-For")) or self.client_address[0] not in ("127.0.0.1", "::1") \
-            or self.cross_origin()
+            or not self.local_host() or self.cross_origin()
+
+    def local_host(self):
+        host = (self.headers.get("Host") or "").strip().lower()
+        name = host.rsplit(":", 1)[0] if not host.endswith("]") else host
+        return name in LOCAL_HOSTS
 
     def cross_origin(self):
+        site = self.headers.get("Sec-Fetch-Site")
+        if site:
+            return site in ("cross-site", "same-site")
         origin = self.headers.get("Origin")
-        if not origin or origin == "null":
+        if origin == "null":
+            return True
+        if not origin:
             return False
-        host = self.headers.get("Host", "")
+        host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host", "")
         return origin.split("://", 1)[-1] != host
 
     def allowed_origin(self):

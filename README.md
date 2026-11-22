@@ -94,7 +94,12 @@ session nothing on your PC can be changed unless you set `allow_remote_write = t
 **The online demo page can connect to your server too:** on its Help page, paste your tunnel link (or
 `http://localhost:8420` on the same PC). Your browser then talks to your livemap directly; the data
 never passes through GitHub. Only the origin in `pages_origin` (the official demo page by default) is
-allowed, the token is always required, and changes are always off from there.
+allowed, the token is always required, and changes are always off from there. Note that the token then
+travels in the map-image addresses too (an image cannot send a header), so it can show up in the
+tunnel's logs; delete `data/access_token.txt` to issue a new one whenever you like.
+
+Running your own copy of the Pages site (a fork): Settings → Pages → "Deploy from a branch",
+`gh-pages`, `/ (root)`, once; the workflow publishes that branch on every push.
 
 ## FAQ
 

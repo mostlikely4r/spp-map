@@ -70,7 +70,8 @@ class Exporter:
         self.server.shutdown()
 
     def get(self, path, raw=False, timeout=900):
-        with urllib.request.urlopen(self.url + path, timeout=timeout) as r:
+        req = urllib.request.Request(self.url + path, headers={"X-Livemap-Token": self.app.cfg.token})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             data = r.read()
         return data if raw else json.loads(data)
 
