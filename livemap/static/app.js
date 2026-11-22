@@ -109,6 +109,7 @@ function showError(err) {
 
 async function route() {
   if (typeof stopWorld === 'function') stopWorld();
+  if (location.pathname !== '/help') clearInterval(helpTimer);
   if (mapObj) { mapObj.remove(); mapObj = null; }
   const p = location.pathname;
   try {
@@ -327,6 +328,106 @@ function fixSteps(core, cap, canWrite) {
     f.setting ? el('div', { class: 'meta' }, el('a', { href: '#settings' }, 'change it below under Settings')) : null)));
 }
 
+const EXPORT_LABELS = { live: 'live positions + test runs', travel: 'travel layers', events: 'deaths, quests and level-ups', zones: 'zone levels' };
+let helpTimer = null;
+
+function post(path, body) {
+  return api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+}
+
+function capsSignature(c) {
+  return JSON.stringify(Object.values((c && c.cores) || {}).map(r => r.caps.map(x => x.status + x.detail)));
+}
+
+function watchHelp() {
+  clearInterval(helpTimer);
+  helpTimer = setInterval(async () => {
+    if (location.pathname !== '/help' || document.visibilityState !== 'visible') return;
+    try {
+      const fresh = await api('capabilities?refresh=1');
+      if (capsSignature(fresh) !== capsSignature(capsCache)) { capsCache = fresh; helpPage(); }
+    } catch (e) { }
+  }, 15000);
+}
+
+function enableButton(core, group, canWrite) {
+  const out = el('div', { class: 'meta' });
+  if (!canWrite) return el('div', { class: 'meta' }, 'One-click enable works from the computer livemap runs on.');
+  const btn = el('button', { class: 'ghost enable' }, 'Enable ' + (EXPORT_LABELS[group] || group));
+  btn.onclick = async () => {
+    btn.disabled = true; out.textContent = 'writing aiplayerbot.conf ...';
+    try {
+      const r = await post('enable', { core, group });
+      out.textContent = (r.added.length ? 'Added ' + r.added.join(', ') + ' (old file kept as aiplayerbot.conf.bak). ' : 'Already listed. ')
+        + 'Restart the world server to start logging; this card turns green by itself once the first file appears.';
+      watchHelp();
+    } catch (e) { out.textContent = String(e.message || e); btn.disabled = false; }
+  };
+  return el('div', { class: 'enablebox' }, btn,
+    group === 'live' ? el('div', { class: 'meta' }, 'Disk use: about 1 GB a day at 3000 bots. Turn on "Keep old logs at boot" below to keep old boots in check.') : null,
+    out);
+}
+
+function setupForm(first) {
+  const box = el('div', { class: 'tile setup' });
+  const field = (label, hint, value) => {
+    const input = el('input', { type: 'search', value: value || '', placeholder: hint });
+    return [input, el('label', { class: 'setuprow' }, el('div', { class: 'name' }, label), input)];
+  };
+  const [name, nameRow] = field('Name', 'a short label, e.g. wotlk or myserver');
+  const [client, clientRow] = field('Game client Data folder', 'the folder with the .MPQ files, e.g. C:/Games/WoW/Data');
+  const [conf, confRow] = field('mangosd.conf (optional)', 'your world server config; gives players, NPCs and bots');
+  const [logs, logsRow] = field('Logs folder (optional)', 'only if it is not the LogsDir from mangosd.conf');
+  const clientChips = el('div', { class: 'chips' });
+  const confChips = el('div', { class: 'chips' });
+  const result = el('div', {});
+  const body = () => ({ name: name.value.trim(), client: client.value.trim(), mangosd_conf: conf.value.trim(), logs: logs.value.trim() });
+  const fill = d => {
+    if (!name.value) name.value = d.suggest || '';
+    clientChips.textContent = '';
+    for (const c of d.clients) clientChips.append(el('span', { class: 'chip', title: c, onclick: () => { client.value = c; } }, c));
+    if (d.scanning) clientChips.append(el('span', { class: 'meta' }, ' looking for game clients on your drives ...'));
+    else if (!d.clients.length) clientChips.append(el('span', { class: 'meta' }, 'no game client found automatically; type the path'));
+    confChips.textContent = '';
+    for (const c of d.confs) confChips.append(el('span', { class: 'chip', title: c, onclick: () => { conf.value = c; } }, c));
+    return d.scanning;
+  };
+  const load = async () => {
+    try { if (fill(await api('setup/detect'))) setTimeout(() => { if (box.isConnected) load(); }, 4000); } catch (e) { }
+  };
+  const test = el('button', { class: 'ghost' }, 'test');
+  const save = el('button', {}, first ? 'save and open the map' : 'add this server');
+  test.onclick = async () => {
+    result.textContent = 'checking ...';
+    try {
+      const r = await post('setup/check', body());
+      result.textContent = '';
+      result.append(el('div', { class: 'ladder' }, r.ladder.map(l => el('span', { class: 'step' + (l.ok ? ' ok' : ''), title: l.text }, l.level + ' ' + LEVEL_NAMES[l.level]))),
+        el('div', { class: 'sub' }, r.level ? `This setup reaches ${r.level}: ${r.ladder.find(l => l.level === r.level).text}.` : 'Nothing works with these paths yet.'),
+        el('div', { class: 'list' }, r.caps.filter(c => ['client', 'dbc', 'world_db', 'char_db', 'bot_module'].includes(c.id)).map(c =>
+          el('div', { class: 'row' }, el('div', { class: 'name' }, c.label, el('span', { class: 'badge st-' + c.status }, STATUS_TEXT[c.status])), el('div', { class: 'meta' }, c.detail)))),
+        r.derived.logs ? el('div', { class: 'meta' }, 'logs: ' + r.derived.logs) : null);
+    } catch (e) { result.textContent = String(e.message || e); }
+  };
+  save.onclick = async () => {
+    result.textContent = 'saving ...';
+    try {
+      await post('setup/save', body());
+      capsCache = null;
+      go('/');
+    } catch (e) { result.textContent = String(e.message || e); }
+  };
+  box.append(
+    el('div', { class: 'sub' }, first
+      ? 'Tell livemap where your game client and server are. Only the client is needed to browse the maps; mangosd.conf adds players, NPCs and bots.'
+      : 'Add another server (or another expansion) to this map.'),
+    nameRow, clientRow, clientChips, confRow, confChips,
+    el('details', {}, el('summary', { class: 'meta' }, 'more options'), logsRow),
+    el('div', { class: 'chips' }, test, save), result);
+  load();
+  return box;
+}
+
 function unlocks(report, capId) {
   return Object.entries(report.layers).filter(([, l]) => l.status !== 'ok' && l.needs.includes(capId)).map(([k, l]) => [k, l.label]);
 }
@@ -339,8 +440,11 @@ async function helpPage(refresh) {
   add(el('h1', {}, 'Help and setup'),
     el('p', { class: 'sub' }, 'What this map can show for each server, where each part comes from, and how to unlock the rest. ',
       el('button', { class: 'ghost', onclick: () => helpPage(true) }, 're-check')));
-  if (!cores.length) {
-    add(el('div', { class: 'notice' }, 'No server is set up yet. Add a [[core]] entry to livemap.toml (see livemap.example.toml): the game client Data folder gives you the maps, mangosd.conf gives you players and NPCs.'));
+  if (capsCache.failed) add(el('div', { class: 'notice' }, 'Could not check the servers: ' + capsCache.failed));
+  if (!cores.length && !capsCache.failed) {
+    add(el('h2', {}, 'Set up'), canWrite ? setupForm(true)
+      : el('div', { class: 'notice' }, 'No server is set up yet. Open this page on the computer livemap runs on to set it up.'));
+    return;
   }
   add(el('h2', {}, 'Your server at a glance'));
   for (const [name, r] of cores) {
@@ -381,6 +485,8 @@ async function helpPage(refresh) {
     }
   }
   if (!cards) add(el('p', { class: 'sub' }, 'Everything is set up. Nothing more to unlock.'));
+  if (canWrite) add(el('details', { class: 'addserver' }, el('summary', {}, 'Add another server'), setupForm(false)));
+  if (cores.some(([, r]) => r.caps.some(c => c.status !== 'ok' && c.detail.includes('listed but not written')))) watchHelp();
   add(el('h2', { id: 'settings' }, 'Settings'));
   await settingsPage(true);
   if (location.hash) {

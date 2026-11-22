@@ -20,6 +20,34 @@ def read_values(path):
     return out
 
 
+LOG_KEY = re.compile(rb"^\s*AiPlayerbot\.AllowedLogFiles\s*=\s*(.*?)\s*$")
+
+
+def add_log_files(path, files):
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    nl = b"\r\n" if b"\r\n" in raw else b"\n"
+    lines = raw.split(nl)
+    for i, line in enumerate(lines):
+        m = LOG_KEY.match(line)
+        if m:
+            have = [f.strip() for f in m.group(1).decode("utf-8", "replace").split(",") if f.strip()]
+            added = [f for f in files if f not in have]
+            if not added:
+                return []
+            lines[i] = ("AiPlayerbot.AllowedLogFiles = " + ",".join(have + added)).encode()
+            break
+    else:
+        added = list(files)
+        anchor = next((i for i, l in enumerate(lines) if l.strip() and not l.lstrip().startswith(b"#")), len(lines))
+        lines.insert(anchor, ("AiPlayerbot.AllowedLogFiles = " + ",".join(added)).encode())
+    with open(path + ".bak", "wb") as fh:
+        fh.write(raw)
+    with open(path, "wb") as fh:
+        fh.write(nl.join(lines))
+    return added
+
+
 def write_value(path, key, value):
     if key not in EDITABLE:
         raise ValueError(f"{key} is not editable here")

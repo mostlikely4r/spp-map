@@ -58,6 +58,13 @@ def cmd_serve(cfg, args):
     app.start_preview_loop()
     server = serve(app)
     print(f"livemap on http://{cfg.host}:{cfg.port}  (local access needs no token)", flush=True)
+    if not cfg.cores:
+        from .setup import start_client_scan
+        start_client_scan()
+        print(f"no servers set up yet ({cfg.path} not found or empty): the browser page walks you through it", flush=True)
+    if args.open:
+        import webbrowser
+        threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{cfg.port}/")).start()
     tunnel = start_tunnel(cfg, os.path.join(cfg.data_dir, "remote_url.txt")) if args.tunnel else None
     try:
         server.serve_forever()
@@ -209,6 +216,8 @@ def main():
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("serve", help="run the web interface")
     p.add_argument("--tunnel", action="store_true", help="also open a cloudflared quick tunnel")
+    p.add_argument("--open", action="store_true", help="open the map in the default browser")
+    p.add_argument("--port", type=int, help="override the port from livemap.toml")
     sub.add_parser("ingest", help="index test results once and print counts")
     p = sub.add_parser("snapshot", help="render a run page to PNG")
     p.add_argument("--run", type=int)
@@ -225,7 +234,14 @@ def main():
     p = sub.add_parser("basemaps", help="prebuild painted basemaps from the client")
     p.add_argument("--core", action="append")
     args = parser.parse_args()
-    cfg = config.load(args.config)
+    path = args.config
+    if not os.path.isabs(path) and not os.path.exists(path):
+        beside = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), path)
+        if os.path.exists(beside) or args.cmd == "serve":
+            path = beside
+    cfg = config.load(path)
+    if getattr(args, "port", None):
+        cfg.port = args.port
     {"serve": cmd_serve, "ingest": cmd_ingest, "snapshot": cmd_snapshot, "basemaps": cmd_basemaps, "verify": cmd_verify, "doctor": cmd_doctor}[args.cmd](cfg, args)
 
 

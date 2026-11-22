@@ -129,6 +129,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(app.capabilities(q["core"], refresh))
             return self.send_json({"cores": app.capabilities(None, refresh), "remote": self.is_remote(),
                                    "can_write": not self.is_remote() or app.cfg.allow_remote_write})
+        if name.startswith("setup/") or name == "enable":
+            from . import setup
+            if method == "POST" and self.is_remote() and not app.cfg.allow_remote_write:
+                return self.send_json({"error": "setup writes files on this computer; it only works from the computer "
+                                                 "livemap runs on (or set allow_remote_write in livemap.toml)"}, 403)
+            try:
+                if method == "GET" and name == "setup/detect":
+                    return self.send_json(setup.detect(app))
+                if method == "POST" and name == "setup/check":
+                    return self.send_json(setup.check(app, self.body()))
+                if method == "POST" and name == "setup/save":
+                    return self.send_json({"ok": True, "report": setup.save(app, self.body())})
+                if method == "POST" and name == "enable":
+                    b = self.body()
+                    if b.get("core") not in app.cores:
+                        return self.send_json({"error": "unknown core"}, 400)
+                    return self.send_json(dict(app.enable_exports(b["core"], str(b.get("group"))), ok=True))
+            except (ValueError, OSError) as exc:
+                return self.send_json({"error": str(exc)}, 400)
+            return self.send_json({"error": f"unknown endpoint {name}"}, 404)
         if method == "GET" and name == "tests":
             return self.send_json(cat.tests(
                 core=q.get("core"), family=q.get("family"), verdict=q.get("verdict"), q=q.get("q"),

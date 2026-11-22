@@ -119,6 +119,31 @@ class App:
             core.dbc = out
             core.dbc_from_client = True
 
+    def add_core(self, entry):
+        from .config import add_core
+        core = add_core(self.cfg, os.path.dirname(self.cfg.path), "", entry)
+        self.dbc_fallback(core)
+        cores = dict(self.cores)
+        cores[core.name] = CoreContext(self, core, self.cfg.data_dir)
+        self.cores = cores
+        return cores[core.name].probe.report(True)
+
+    def enable_exports(self, core, group):
+        from . import botconf
+        from .capabilities import EXPORT_GROUPS
+        ctx = self.cores[core]
+        if group not in EXPORT_GROUPS:
+            raise ValueError(f"unknown export group {group}")
+        path = ctx.core.bot_conf
+        if not path or not os.path.isfile(path):
+            raise ValueError("no aiplayerbot.conf for this server")
+        added = botconf.add_log_files(path, EXPORT_GROUPS[group]["files"])
+        if group == "live":
+            values = botconf.read_values(path) or {}
+            if (values.get("AiPlayerbot.LiveMapSampleSec") or {}).get("value") is None:
+                botconf.write_value(path, "AiPlayerbot.LiveMapSampleSec", "5")
+        return {"added": added, "report": ctx.probe.report(True)}
+
     def capabilities(self, core=None, refresh=False):
         if core:
             return self.cores[core].probe.report(refresh)

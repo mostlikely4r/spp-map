@@ -119,8 +119,10 @@ def resolve(base, path):
 def load(path):
     path = os.path.abspath(path)
     base = os.path.dirname(path)
-    with open(path, "rb") as fh:
-        raw = tomllib.load(fh)
+    raw = {}
+    if os.path.isfile(path):
+        with open(path, "rb") as fh:
+            raw = tomllib.load(fh)
     server = raw.get("server", {})
     data_dir = resolve(base, server.get("data_dir", "data"))
     os.makedirs(data_dir, exist_ok=True)

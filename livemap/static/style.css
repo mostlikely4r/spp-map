@@ -142,3 +142,11 @@ button.on { outline: 2px solid var(--accent); }
 .snippet { display: flex; gap: 6px; align-items: flex-start; margin-top: 4px; }
 .snippet code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: #0b0f14; padding: 6px 8px; border-radius: 6px; font-size: 12px; }
 .anchor { display: block; }
+.setup { display: flex; flex-direction: column; gap: 8px; }
+.setuprow { display: block; }
+.setuprow .name { font-size: 13px; margin-bottom: 3px; }
+.setup .chips .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.enablebox { margin-top: 6px; }
+.enablebox button.enable { border-color: var(--accent); }
+.addserver { margin: 12px 0; }
+.addserver summary { cursor: pointer; font-weight: 600; }
