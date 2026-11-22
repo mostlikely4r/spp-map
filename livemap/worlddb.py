@@ -14,12 +14,38 @@ GO_TYPES = {0: "door", 1: "button", 2: "questgiver", 3: "chest", 5: "generic", 6
             26: "flagdrop", 29: "capturepoint"}
 
 
+CMANGOS = {
+    "ct_entry": "Entry", "ct_name": "Name", "ct_min": "MinLevel", "ct_max": "MaxLevel", "ct_rank": "Rank",
+    "ct_flags": "NpcFlags", "ct_faction": "Faction", "ct_loot": "LootId",
+}
+VMANGOS = {
+    "ct_entry": "entry", "ct_name": "name", "ct_min": "level_min", "ct_max": "level_max", "ct_rank": "rank",
+    "ct_flags": "npc_flags", "ct_faction": "faction", "ct_loot": "loot_id",
+}
+
+
 class WorldDb:
     def __init__(self, core):
         self.core = core
         self.info = core.world_db
         self.local = threading.local()
         self.cache = {}
+        self.vm = core.flavor == "vmangos"
+        self.s = VMANGOS if self.vm else CMANGOS
+        self.patch = 10
+        if self.vm:
+            from .config import read_conf
+            value = read_conf(core.mangosd_conf).get("WowPatch", "10")
+            self.patch = int(value) if value.isdigit() else 10
+
+    def spawn_filter(self, alias):
+        return f" and {alias}.patch_min <= {self.patch} and {alias}.patch_max >= {self.patch}" if self.vm else ""
+
+    def tpl_filter(self, table, alias):
+        if not self.vm:
+            return ""
+        return (f" and {alias}.patch = (select max(px.patch) from {table} px"
+                f" where px.entry = {alias}.entry and px.patch <= {self.patch})")
 
     def available(self):
         return self.info is not None
@@ -47,31 +73,35 @@ class WorldDb:
         return [
             {"map": m, "x": float(x), "y": float(y), "z": float(z)}
             for m, x, y, z in self.rows(
-                "select map, position_x, position_y, position_z from creature where id=%s limit %s", (entry, limit))
+                "select map, position_x, position_y, position_z from creature c where id=%s" + self.spawn_filter("c")
+                + " limit %s", (entry, limit))
         ]
 
     def gameobject_spawns(self, entry, limit=SPAWN_LIMIT):
         return [
             {"map": m, "x": float(x), "y": float(y), "z": float(z)}
             for m, x, y, z in self.rows(
-                "select map, position_x, position_y, position_z from gameobject where id=%s limit %s", (entry, limit))
+                "select map, position_x, position_y, position_z from gameobject c where id=%s" + self.spawn_filter("c")
+                + " limit %s", (entry, limit))
         ]
 
     def creature_name(self, entry):
-        r = self.rows("select Name from creature_template where Entry=%s", (entry,))
+        r = self.rows("select t.name from creature_template t where t.entry=%s" + self.tpl_filter("creature_template", "t"),
+                      (entry,))
         return r[0][0] if r else f"creature {entry}"
 
     def gameobject_name(self, entry):
-        r = self.rows("select name from gameobject_template where entry=%s", (entry,))
+        r = self.rows("select t.name from gameobject_template t where t.entry=%s" + self.tpl_filter("gameobject_template", "t"),
+                      (entry,))
         return r[0][0] if r else f"object {entry}"
 
     def item_name(self, entry):
-        r = self.rows("select name from item_template where entry=%s", (entry,))
+        r = self.rows("select t.name from item_template t where t.entry=%s" + self.tpl_filter("item_template", "t"), (entry,))
         return r[0][0] if r else f"item {entry}"
 
     def actors(self, table, quest_id, kind):
         out = []
-        for (entry,) in self.rows(f"select id from {table} where quest=%s", (quest_id,)):
+        for (entry,) in self.rows(f"select distinct id from {table} c where quest=%s" + self.spawn_filter("c"), (quest_id,)):
             if kind == "creature":
                 out.append({"entry": entry, "name": self.creature_name(entry), "spawns": self.creature_spawns(entry)})
             else:
@@ -80,7 +110,7 @@ class WorldDb:
 
     def item_droppers(self, item, limit=6):
         rows = self.rows(
-            "select distinct ct.Entry from creature_loot_template l join creature_template ct on ct.LootId=l.entry"
+            f"select distinct ct.entry from creature_loot_template l join creature_template ct on ct.{self.s['ct_loot']}=l.entry"
             " where l.item=%s limit %s", (item, limit))
         return [r[0] for r in rows]
 
@@ -90,8 +120,8 @@ class WorldDb:
             return self.cache[key]
         r = self.rows(
             "select entry, Title, MinLevel, QuestLevel, ReqCreatureOrGOId1, ReqCreatureOrGOId2, ReqCreatureOrGOId3,"
-            " ReqCreatureOrGOId4, ReqItemId1, ReqItemId2, ReqItemId3, ReqItemId4 from quest_template where entry=%s",
-            (quest_id,))
+            " ReqCreatureOrGOId4, ReqItemId1, ReqItemId2, ReqItemId3, ReqItemId4 from quest_template t where entry=%s"
+            + self.tpl_filter("quest_template", "t"), (quest_id,))
         if not r:
             return None
         entry, title, min_level, quest_level, *req = r[0]
@@ -125,7 +155,8 @@ class WorldDb:
         return out
 
     def npc_flags(self):
-        return VANILLA_NPC_FLAGS if self.core.name == "vanilla" else LATER_NPC_FLAGS
+        classic = self.core.expansion == "classic" or (not self.core.expansion and self.core.name == "vanilla")
+        return VANILLA_NPC_FLAGS if classic else LATER_NPC_FLAGS
 
     def npc_role(self, flags, rank):
         for bit, role in self.npc_flags():
@@ -165,13 +196,15 @@ class WorldDb:
 
     def spawn_layer(self, kind, map_id, bounds, limit=2500, bins=48):
         if kind == "creatures":
-            table, alias, tmpl, key = "creature", "c", "creature_template", "Entry"
-            cols = "c.guid, c.id, c.position_x, c.position_y, t.Name, t.MinLevel, t.MaxLevel, t.Rank, t.NpcFlags, t.Faction"
+            table, alias, tmpl, key = "creature", "c", "creature_template", "entry"
+            s = self.s
+            cols = (f"c.guid, c.id, c.position_x, c.position_y, t.{s['ct_name']}, t.{s['ct_min']}, t.{s['ct_max']},"
+                    f" t.{s['ct_rank']}, t.{s['ct_flags']}, t.{s['ct_faction']}")
         else:
             table, alias, tmpl, key = "gameobject", "c", "gameobject_template", "entry"
             cols = "c.guid, c.id, c.position_x, c.position_y, t.name, t.type"
-        where = (f"from {table} c join {tmpl} t on t.{key}=c.id where c.map=%s"
-                 " and c.position_x between %s and %s and c.position_y between %s and %s")
+        where = (f"from {table} c join {tmpl} t on t.{key}=c.id{self.tpl_filter(tmpl, 't')} where c.map=%s"
+                 " and c.position_x between %s and %s and c.position_y between %s and %s" + self.spawn_filter("c"))
         args = (map_id, bounds["bottom"], bounds["top"], bounds["right"], bounds["left"])
         total = self.rows(f"select count(*) {where}", args)[0][0]
         if total > limit:
@@ -198,7 +231,7 @@ class WorldDb:
 
     def spawn_points(self):
         out = {}
-        for m, x, y in self.rows("select map, position_x, position_y from creature"):
+        for m, x, y in self.rows("select map, position_x, position_y from creature c where 1=1" + self.spawn_filter("c")):
             out.setdefault(int(m), []).append((float(x), float(y)))
         return out
 
@@ -207,7 +240,8 @@ class WorldDb:
         if key not in self.cache:
             out = {}
             for table in ("creature", "gameobject"):
-                for m, i, j in self.rows(f"select map, floor(position_x/%s), floor(position_y/%s) from {table} group by 1, 2, 3",
+                for m, i, j in self.rows(f"select map, floor(position_x/%s), floor(position_y/%s) from {table} c"
+                                         f" where 1=1{self.spawn_filter('c')} group by 1, 2, 3",
                                          (cell, cell)):
                     out.setdefault(int(m), set()).add((int(i), int(j)))
             self.cache[key] = out
@@ -217,7 +251,7 @@ class WorldDb:
         key = ("extent", map_id)
         if key not in self.cache:
             r = self.rows("select min(position_x), max(position_x), min(position_y), max(position_y), count(*)"
-                          " from creature where map=%s", (map_id,))[0]
+                          " from creature c where map=%s" + self.spawn_filter("c"), (map_id,))[0]
             if not r[4]:
                 r = self.rows("select min(x), max(x), min(y), max(y), count(*) from ai_playerbot_travelnode"
                               " where map_id=%s", (map_id,))[0]

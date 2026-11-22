@@ -121,11 +121,26 @@ def signature(ctx):
     return (tuple(int(v or 0) for v in rows), file_sig(ctx.basemaps.dbc_path("AreaTrigger")), file_sig(anchor_path(ctx)))
 
 
+def teleports(world, expansion=""):
+    if world.available():
+        try:
+            return world.rows("SELECT id, target_map, target_position_x, target_position_y FROM areatrigger_teleport")
+        except Exception:
+            pass
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gamedata", f"teleports_{expansion or 'classic'}.csv")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            next(fh)
+            return [(int(a), int(b), float(c), float(d)) for a, b, c, d in (line.strip().split(",") for line in fh if line.strip())]
+    except (OSError, ValueError, StopIteration):
+        return []
+
+
 def doors_by_map(world, dbc_path):
     recs, _ = read_dbc(dbc_path)
     triggers = {r[0]: (r[1], as_float(r[2]), as_float(r[3])) for r in recs}
     out = {}
-    for tid, tmap, tx, ty in world.rows("SELECT id, target_map, target_position_x, target_position_y FROM areatrigger_teleport"):
+    for tid, tmap, tx, ty in teleports(world, world.core.expansion):
         src = triggers.get(tid)
         if not src or src[0] == tmap:
             continue
@@ -138,7 +153,7 @@ def exits_by_map(world, dbc_path):
     recs, _ = read_dbc(dbc_path)
     triggers = {r[0]: (r[1], as_float(r[2]), as_float(r[3])) for r in recs}
     out = {}
-    for tid, tmap, tx, ty in world.rows("SELECT id, target_map, target_position_x, target_position_y FROM areatrigger_teleport"):
+    for tid, tmap, tx, ty in teleports(world, world.core.expansion):
         src = triggers.get(tid)
         if not src or src[0] == tmap:
             continue

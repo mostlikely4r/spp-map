@@ -3,6 +3,7 @@
 const state = { core: store('core') || '', verdict: '', family: '', bucket: '', preview: '', flipped: false, q: '', offset: 0 };
 const view = document.getElementById('view');
 let summaryCache = null;
+let capsCache = null;
 let mapObj = null;
 
 function store(k, v) {
@@ -36,7 +37,7 @@ function add(...kids) { view.append(...kids.flat().filter(k => k !== null && k !
 function go(path) { history.pushState({}, '', path); route(); }
 document.addEventListener('click', e => {
   const a = e.target.closest('a[data-link]');
-  if (a && a.origin === location.origin) { e.preventDefault(); go(a.pathname + a.search); }
+  if (a && a.origin === location.origin) { e.preventDefault(); go(a.pathname + a.search + a.hash); }
 });
 window.addEventListener('popstate', route);
 
@@ -45,15 +46,60 @@ function short(ts) { return ts ? ts.slice(5, 16) : ''; }
 function prettyTest(t) { return t.replace(/_/g, ' '); }
 function testLink(core, test) { return `/t/${encodeURIComponent(core)}/${encodeURIComponent(test)}`; }
 
-function coreChips() {
+function capsOf(core) { return capsCache && capsCache.cores ? capsCache.cores[core] : null; }
+function mapCores() { return Object.keys((capsCache && capsCache.cores) || {}).filter(c => capsOf(c).features.map); }
+function testCores() {
+  if (capsCache && capsCache.failed) return summaryCache ? summaryCache.cores : [];
+  return Object.keys((capsCache && capsCache.cores) || {}).filter(c => capsOf(c).features.tests);
+}
+
+function helpDot() {
+  for (const c of Object.values((capsCache && capsCache.cores) || {})) {
+    const next = c.ladder.find(l => !l.ok);
+    if (!next) continue;
+    if (c.caps.some(x => x.level === next.level && x.status !== 'ok' && x.fix.some(f => f.action || f.snippet))) return true;
+  }
+  return false;
+}
+
+function topBar(kind) {
+  const set = (id, on) => { const n = document.getElementById(id); if (n) n.classList.toggle('on', on); };
+  const tests = document.getElementById('navtests');
+  if (tests) tests.classList.toggle('hidden', !testCores().length);
+  set('navmap', kind === 'map'); set('navtests', kind === 'tests'); set('navhelp', kind === 'help');
+  const dot = document.getElementById('navdot');
+  if (dot) dot.classList.toggle('hidden', !helpDot());
+  coreChips(kind);
+}
+
+function coreChips(kind) {
   const nav = document.getElementById('corechips');
   nav.textContent = '';
-  const cores = (summaryCache && summaryCache.cores) || [];
+  if (kind === 'help') return;
+  if (kind === 'map') {
+    const cores = mapCores();
+    if (cores.length < 2) return;
+    const current = typeof W !== 'undefined' && W.core ? W.core : store('mapcore');
+    for (const c of cores) nav.append(el('span', { class: 'chip' + (current === c ? ' on' : ''), onclick: () => {
+      store('mapcore', c); go(`/w/${encodeURIComponent(c)}`);
+    } }, c));
+    return;
+  }
+  const cores = testCores();
   for (const c of [''].concat(cores)) {
     nav.append(el('span', { class: 'chip' + (state.core === c ? ' on' : ''), onclick: () => {
       state.core = c; store('core', c); state.offset = 0; summaryCache = null; route();
     } }, c || 'all cores'));
   }
+}
+
+function defaultCore() {
+  const cores = mapCores();
+  const saved = store('mapcore');
+  if (saved && cores.includes(saved)) return saved;
+  const live = cores.filter(c => capsOf(c).features.live);
+  const players = cores.filter(c => capsOf(c).features.players);
+  return live[0] || players[0] || cores[0] || null;
 }
 
 function showError(err) {
@@ -66,15 +112,30 @@ async function route() {
   if (mapObj) { mapObj.remove(); mapObj = null; }
   const p = location.pathname;
   try {
-    if (!summaryCache) summaryCache = await api('summary' + (state.core ? '?core=' + state.core : ''));
-    coreChips();
+    if (!capsCache) {
+      try { capsCache = await api('capabilities'); } catch (e) { capsCache = { cores: {}, failed: String(e.message || e) }; }
+    }
+    if (state.core && capsCache.cores[state.core] && !testCores().includes(state.core)) { state.core = ''; summaryCache = null; }
     let m;
+    if (p === '/help') { topBar('help'); return await helpPage(); }
+    if (p === '/settings') { topBar('help'); return await settingsPage(); }
+    if (p === '/' || p === '/w' || p === '/w/') {
+      const core = defaultCore();
+      if (!core) { history.replaceState({}, '', '/help'); topBar('help'); return await helpPage(); }
+      topBar('map');
+      await worldPage(core, null);
+      return coreChips('map');
+    }
+    if ((m = p.match(/^\/w\/([^/]+)(?:\/(\d+|world|atlas))?$/))) {
+      topBar('map');
+      await worldPage(decodeURIComponent(m[1]), m[2] === undefined || m[2] === 'atlas' ? null : (m[2] === 'world' ? 'world' : +m[2]));
+      return coreChips('map');
+    }
+    if (!summaryCache) summaryCache = await api('summary' + (state.core ? '?core=' + state.core : ''));
+    topBar('tests');
     if ((m = p.match(/^\/r\/(\d+)$/))) return await runPage(+m[1]);
     if ((m = p.match(/^\/t\/([^/]+)\/(.+)$/))) return await testPage(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
-    if (p === '/w' || p === '/w/') return await worldPage(state.core || null, null);
-    if ((m = p.match(/^\/w\/([^/]+)(?:\/(\d+|world|atlas))?$/))) return await worldPage(decodeURIComponent(m[1]), m[2] === undefined || m[2] === 'atlas' ? null : (m[2] === 'world' ? 'world' : +m[2]));
     if (p === '/clusters') return await clustersPage();
-    if (p === '/settings') return await settingsPage();
     return await homePage();
   } catch (e) { showError(e); }
 }
@@ -121,9 +182,8 @@ async function homePage() {
     tiles(),
     transitionList('Flipped to PASS', summaryCache.flips.slice(0, 5)),
     transitionList('Regressions (PASS → FAIL)', summaryCache.regressions.slice(0, 5)),
-    el('div', { class: 'tabs' }, el('a', { class: 'chip', href: '/w', 'data-link': 1 }, 'Live map'), el('a', { class: 'chip on', href: '/', 'data-link': 1 }, 'Tests'),
-      el('a', { class: 'chip', href: '/clusters', 'data-link': 1 }, 'Failure groups'),
-      el('a', { class: 'chip', href: '/settings', 'data-link': 1 }, 'Settings')),
+    el('div', { class: 'tabs' }, el('a', { class: 'chip on', href: '/tests', 'data-link': 1 }, 'Tests'),
+      el('a', { class: 'chip', href: '/clusters', 'data-link': 1 }, 'Failure groups')),
     search,
     chipRow([['', 'any verdict'], ['PASS', 'pass'], ['FAIL', 'fail'], ['ABORT', 'abort'], ['IMPOSSIBLE', 'impossible']], 'verdict'),
     chipRow([['', 'all families']].concat(famNames.map(f => [f, f])), 'family'),
@@ -245,14 +305,103 @@ function mapSectionBlocks(map) {
   return blocks;
 }
 
-async function settingsPage() {
-  const d = await api('settings');
+const LEVEL_NAMES = { L0: 'Maps', L1: 'Your database', L2: 'Bots', L3: 'Bot exports', L4: 'Live map', L5: 'Bot tests' };
+const STATUS_TEXT = { ok: 'works', degraded: 'works, approximate', missing: 'not set up', error: 'problem' };
+
+function copyButton(text) {
+  const b = el('button', { class: 'ghost copy' }, 'copy');
+  b.onclick = async () => {
+    try { await navigator.clipboard.writeText(text); b.textContent = 'copied'; }
+    catch (e) { b.textContent = 'select and copy by hand'; }
+    setTimeout(() => { b.textContent = 'copy'; }, 2000);
+  };
+  return b;
+}
+
+function fixSteps(core, cap, canWrite) {
+  return el('ol', { class: 'fix' }, cap.fix.map(f => el('li', {},
+    el('div', {}, f.text),
+    f.snippet ? el('div', { class: 'snippet' }, el('code', {}, f.snippet), copyButton(f.snippet)) : null,
+    f.file ? el('div', { class: 'meta' }, f.file.endsWith('.toml') ? `in the [[core]] entry named "${core}" of ` : 'in ', el('code', {}, f.file)) : null,
+    f.action && f.action.enable && typeof enableButton === 'function' ? enableButton(core, f.action.enable, canWrite) : null,
+    f.setting ? el('div', { class: 'meta' }, el('a', { href: '#settings' }, 'change it below under Settings')) : null)));
+}
+
+function unlocks(report, capId) {
+  return Object.entries(report.layers).filter(([, l]) => l.status !== 'ok' && l.needs.includes(capId)).map(([k, l]) => [k, l.label]);
+}
+
+async function helpPage(refresh) {
+  if (refresh || !capsCache) capsCache = await api('capabilities' + (refresh ? '?refresh=1' : ''));
   view.textContent = '';
-  add(el('h1', {}, 'Bot settings'),
+  const cores = Object.entries(capsCache.cores || {});
+  const canWrite = capsCache.can_write;
+  add(el('h1', {}, 'Help and setup'),
+    el('p', { class: 'sub' }, 'What this map can show for each server, where each part comes from, and how to unlock the rest. ',
+      el('button', { class: 'ghost', onclick: () => helpPage(true) }, 're-check')));
+  if (!cores.length) {
+    add(el('div', { class: 'notice' }, 'No server is set up yet. Add a [[core]] entry to livemap.toml (see livemap.example.toml): the game client Data folder gives you the maps, mangosd.conf gives you players and NPCs.'));
+  }
+  add(el('h2', {}, 'Your server at a glance'));
+  for (const [name, r] of cores) {
+    const ladder = el('div', { class: 'ladder' }, r.ladder.map(l => el('span', { class: 'step' + (l.ok ? ' ok' : ''), title: l.text },
+      l.level + ' ' + LEVEL_NAMES[l.level])));
+    const working = Object.entries(r.layers).filter(([, l]) => l.status !== 'missing');
+    add(el('div', { class: 'tile helpcore' },
+      el('h3', {}, name, el('span', { class: 'badge' }, [r.flavor, r.expansion].filter(Boolean).join(' · ') || 'unknown server')),
+      ladder,
+      el('div', { class: 'sub' }, r.level ? `Reached ${r.level}: ${r.ladder.find(l => l.level === r.level).text}.` : 'Nothing works yet: start with the game client below.'),
+      working.length ? el('details', {}, el('summary', {}, `${working.length} map layers work`),
+        el('div', { class: 'list' }, working.map(([k, l]) => el('div', { class: 'row' },
+          el('div', { class: 'name' }, l.label, l.status === 'degraded' ? el('span', { class: 'badge approxb' }, 'approx.') : null),
+          el('div', { class: 'meta' }, 'from ' + (l.source || '?')))))) : null));
+  }
+  add(el('h2', {}, 'Get more'));
+  let cards = 0;
+  for (const [name, r] of cores) {
+    const order = ['L0', 'L1', 'L2', 'L3', 'L4', 'L5'];
+    const todo = r.caps.filter(c => c.status !== 'ok' && c.fix.length && c.id !== 'archive')
+      .sort((a, b) => order.indexOf(a.level) - order.indexOf(b.level));
+    if (todo.length && cores.length > 1) add(el('h3', {}, name));
+    for (const c of todo) {
+      cards += 1;
+      const gains = unlocks(r, c.id);
+      const body = [
+        gains.length ? el('div', { class: 'meta' }, 'unlocks: ' + gains.map(g => g[1]).join(', ')) : null,
+        el('div', { class: 'msg' }, c.detail),
+        fixSteps(name, c, canWrite),
+      ];
+      const head = [el('span', { class: 'badge lvl' }, c.level), ' ', c.label, el('span', { class: 'badge st-' + c.status }, STATUS_TEXT[c.status]),
+];
+      const anchors = gains.map(g => el('span', { id: `layer-${name}-${g[0]}`, class: 'anchor' }));
+      const card = c.level === 'L5'
+        ? el('details', { class: 'row card', id: `cap-${name}-${c.id}` }, el('summary', {}, ...head), ...anchors, ...body)
+        : el('div', { class: 'row card', id: `cap-${name}-${c.id}` }, el('div', { class: 'name' }, ...head), ...anchors, ...body);
+      add(card);
+    }
+  }
+  if (!cards) add(el('p', { class: 'sub' }, 'Everything is set up. Nothing more to unlock.'));
+  add(el('h2', { id: 'settings' }, 'Settings'));
+  await settingsPage(true);
+  if (location.hash) {
+    const target = document.getElementById(location.hash.slice(1));
+    if (target) {
+      const card = target.closest('.card') || target;
+      if (card.tagName === 'DETAILS') card.open = true;
+      card.classList.add('flash');
+      card.scrollIntoView({ block: 'start' });
+    }
+  }
+}
+
+async function settingsPage(embedded) {
+  const d = await api('settings');
+  if (!embedded) view.textContent = '';
+  add(el(embedded ? 'h3' : 'h1', {}, 'Bot settings'),
     el('p', { class: 'sub' }, "Written to each core's live aiplayerbot.conf; they take effect on the next server boot."),
     ...(d.can_write ? [] : [el('div', { class: 'notice' }, 'Read-only from a remote session. Set allow_remote_write = true in livemap.toml to change these from here.')]));
   for (const [core, values] of Object.entries(d.cores)) {
-    if (!values) { add(el('h2', {}, core), el('div', { class: 'notice' }, 'aiplayerbot.conf not found')); continue; }
+    if (!values) { add(el('h3', {}, core), el('div', { class: 'meta' }, 'no aiplayerbot.conf (PlayerBots not set up for this core)')); continue; }
     add(el('h2', {}, core));
     for (const [key, v] of Object.entries(values)) {
       const current = v.value === null ? v.default : v.value;
@@ -295,7 +444,7 @@ function testRow(r) {
 async function clustersPage() {
   const rows = await api('clusters' + (state.core ? '?core=' + state.core : ''));
   view.textContent = '';
-  add(el('div', { class: 'tabs' }, el('a', { class: 'chip', href: '/', 'data-link': 1 }, 'Tests'),
+  add(el('div', { class: 'tabs' }, el('a', { class: 'chip', href: '/tests', 'data-link': 1 }, 'Tests'),
     el('a', { class: 'chip on', href: '/clusters', 'data-link': 1 }, 'Failure groups')),
     el('p', { class: 'sub' }, 'Failures grouped by message (numbers ignored). Tap a group to open its newest run.'),
     el('div', { class: 'list' }, rows.map(r => el('a', { class: 'row', href: `/r/${r.example}`, 'data-link': 1 },

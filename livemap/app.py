@@ -11,10 +11,12 @@ from PIL import Image
 from . import telemetry
 from .adtrender import Terrain
 from .basemap import Basemaps
+from .capabilities import Probe
 from .catalog import Catalog
+from .clientdata import client_dbc
 from . import overlay
 from .layers import StaticLayers
-from .live import LiveFeed, recent_events
+from .live import DbFeed, LiveFeed, recent_events
 from .mapstore import MapStore
 from .worlddb import WorldDb
 
@@ -33,8 +35,10 @@ class CoreContext:
         self.data_dir = data_dir
         self._basemaps = None
         self._live = None
+        self._db_live = None
         self._layers = None
         self.world = WorldDb(core)
+        self.probe = Probe(app, self)
 
     @property
     def layers(self):
@@ -62,7 +66,11 @@ class CoreContext:
     def live(self):
         if self._live is None:
             self._live = LiveFeed(self.core, self.basemaps.wmo_floor)
-        return self._live
+        if not self.core.char_db or self._live.is_live():
+            return self._live
+        if self._db_live is None:
+            self._db_live = DbFeed(self.core)
+        return self._db_live
 
     def map_info(self, map_id):
         bm = self.basemaps
@@ -88,11 +96,38 @@ class App:
         self.catalog = Catalog(os.path.join(cfg.data_dir, "livemap.sqlite"))
         self.mapstore = MapStore(os.path.join(cfg.data_dir, "livemap.sqlite"), cfg.map)
         self.terrain = Terrain(self)
+        for name, core in cfg.cores.items():
+            self.dbc_fallback(core)
         self.cores = {name: CoreContext(self, core, cfg.data_dir) for name, core in cfg.cores.items()}
         self.last_ingest = None
         self.listeners = []
         self.overlay_cache = {}
         self.known_cache = {}
+
+    def dbc_fallback(self, core):
+        if core.dbc and os.path.isfile(os.path.join(core.dbc, "Map.dbc")):
+            return
+        client = self.client_dir(core.name)
+        if not client:
+            return
+        try:
+            out = client_dbc(client, core.locale, os.path.join(self.cfg.data_dir, "dbc", core.name))
+        except Exception as exc:
+            print(f"{core.name}: could not read DBC tables from the client: {exc}")
+            return
+        if out:
+            core.dbc = out
+            core.dbc_from_client = True
+
+    def capabilities(self, core=None, refresh=False):
+        if core:
+            return self.cores[core].probe.report(refresh)
+        if len(self.cores) < 2:
+            return {name: ctx.probe.report(refresh) for name, ctx in self.cores.items()}
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(8, len(self.cores))) as pool:
+            reports = list(pool.map(lambda ctx: ctx.probe.report(refresh), self.cores.values()))
+        return dict(zip(self.cores, reports))
 
     def client_dir(self, name):
         core = self.cfg.cores.get(name)
@@ -102,6 +137,7 @@ class App:
         ctx = self.cores.get(name)
         if ctx is not None:
             ctx._basemaps = None
+            ctx.probe.cached = None
 
     def ingest(self):
         added = 0

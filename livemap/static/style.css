@@ -119,3 +119,26 @@ button.on { outline: 2px solid var(--accent); }
   background: rgba(17,19,23,.8); border-radius: 12px; padding: 4px 6px; }
 .wcluster .chip { font-size: 11px; padding: 2px 8px; }
 .wheight { width: 100%; accent-color: var(--accent); margin: 4px 0; }
+.chip .approx { margin-left: 6px; font-size: 10px; padding: 1px 5px; border-radius: 6px; background: #4a3a12; color: #ffd27a; }
+.wdmore { margin-top: 8px; font-size: 13px; }
+.wdmore a { color: var(--accent); }
+#top .hidden { display: none; }
+.navdot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #ffd200; margin-left: 5px; vertical-align: 2px; }
+.navdot.hidden { display: none; }
+.ladder { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+.ladder .step { font-size: 12px; padding: 3px 8px; border-radius: 6px; background: var(--panel2); color: var(--muted); }
+.ladder .step.ok { background: #173b24; color: #8be0a4; }
+.helpcore { margin-bottom: 10px; }
+.card { margin-bottom: 8px; scroll-margin-top: 70px; }
+.card .name, .card summary { font-weight: 600; }
+.card .badge { margin-left: 6px; }
+.badge.lvl { margin-left: 0; }
+.badge.st-missing { background: #3a2a2a; color: #ffb3a7; }
+.badge.st-error { background: #4a1f1f; color: #ff8f80; }
+.badge.st-degraded, .badge.approxb { background: #4a3a12; color: #ffd27a; }
+.card.flash { outline: 2px solid var(--accent); }
+.fix { margin: 6px 0 2px 18px; padding: 0; }
+.fix li { margin: 6px 0; }
+.snippet { display: flex; gap: 6px; align-items: flex-start; margin-top: 4px; }
+.snippet code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: #0b0f14; padding: 6px 8px; border-radius: 6px; font-size: 12px; }
+.anchor { display: block; }

@@ -16,7 +16,7 @@ class Server(ThreadingHTTPServer):
 
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-PAGE_ROUTES = re.compile(r"^/($|r/\d+$|t/[^/]+/.+$|flips$|clusters$|test$|settings$|w$|w/.*$)")
+PAGE_ROUTES = re.compile(r"^/($|r/\d+$|t/[^/]+/.+$|flips$|clusters$|test$|tests$|help$|settings$|w$|w/.*$)")
 COOKIE = "lm_token"
 
 
@@ -121,6 +121,14 @@ class Handler(BaseHTTPRequestHandler):
                 "last_ingest": app.last_ingest,
                 "remote": self.is_remote(),
             })
+        if method == "GET" and name == "capabilities":
+            refresh = q.get("refresh") == "1"
+            if q.get("core"):
+                if q["core"] not in app.cores:
+                    return self.send_json({"error": "unknown core"}, 404)
+                return self.send_json(app.capabilities(q["core"], refresh))
+            return self.send_json({"cores": app.capabilities(None, refresh), "remote": self.is_remote(),
+                                   "can_write": not self.is_remote() or app.cfg.allow_remote_write})
         if method == "GET" and name == "tests":
             return self.send_json(cat.tests(
                 core=q.get("core"), family=q.get("family"), verdict=q.get("verdict"), q=q.get("q"),

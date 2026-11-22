@@ -124,3 +124,27 @@ class ClientArchives:
             return img
         except Exception:
             return None
+
+
+CLIENT_DBCS = ("AreaTable", "AreaTrigger", "DungeonMap", "DungeonMapChunk", "FactionTemplate", "LiquidType", "Map",
+               "WMOAreaTable", "WorldMapArea", "WorldMapOverlay")
+
+
+def client_dbc(client, locale, out_dir):
+    if os.path.isfile(os.path.join(out_dir, "Map.dbc")):
+        return out_dir
+    archives = ClientArchives(client, locale)
+    if not archives.available():
+        return None
+    os.makedirs(out_dir, exist_ok=True)
+    found = 0
+    for name in CLIENT_DBCS:
+        data = archives.read(f"DBFilesClient\{name}.dbc")
+        if not data:
+            continue
+        tmp = os.path.join(out_dir, name + ".dbc.tmp")
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, os.path.join(out_dir, name + ".dbc"))
+        found += 1
+    return out_dir if os.path.isfile(os.path.join(out_dir, "Map.dbc")) else None

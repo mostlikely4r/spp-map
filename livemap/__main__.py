@@ -191,6 +191,18 @@ def cmd_verify_world(app, args):
             print(f"{name}:   cluster {group}  {', '.join(str(m) for m in members)}")
 
 
+def cmd_doctor(cfg, args):
+    from .capabilities import doctor_text
+    app = App(cfg)
+    print(f"config: {cfg.path}")
+    for name in args.core or list(cfg.cores):
+        if name not in cfg.cores:
+            print(f"no core named {name!r} in the config (have: {', '.join(cfg.cores) or 'none'})")
+            continue
+        print(doctor_text(app.capabilities(name, True)))
+        print()
+
+
 def main():
     parser = argparse.ArgumentParser(prog="livemap")
     parser.add_argument("--config", default=DEFAULT_CONFIG)
@@ -208,11 +220,13 @@ def main():
     p.add_argument("--threshold", type=float, default=0.95)
     p.add_argument("--scene", choices=["art", "world"], default="art",
                    help="art: world-DB spawns land on each map's art; world: the World + dungeons placement")
+    p = sub.add_parser("doctor", help="print what each core can show and how to get the rest")
+    p.add_argument("--core", action="append")
     p = sub.add_parser("basemaps", help="prebuild painted basemaps from the client")
     p.add_argument("--core", action="append")
     args = parser.parse_args()
     cfg = config.load(args.config)
-    {"serve": cmd_serve, "ingest": cmd_ingest, "snapshot": cmd_snapshot, "basemaps": cmd_basemaps, "verify": cmd_verify}[args.cmd](cfg, args)
+    {"serve": cmd_serve, "ingest": cmd_ingest, "snapshot": cmd_snapshot, "basemaps": cmd_basemaps, "verify": cmd_verify, "doctor": cmd_doctor}[args.cmd](cfg, args)
 
 
 if __name__ == "__main__":

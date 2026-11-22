@@ -5,7 +5,6 @@ import time
 from datetime import datetime, timedelta
 
 from . import telemetry
-from .config import read_db
 
 POSITIONS = "bot_positions.csv"
 STALE_S = 90
@@ -77,8 +76,8 @@ class CharDb:
 class LiveFeed:
     def __init__(self, core, floors=None):
         self.core = core
-        self.path = os.path.join(core.logs, POSITIONS)
-        self.chars = CharDb(read_db(core.mangosd_conf, "CharacterDatabaseInfo"))
+        self.path = os.path.join(core.logs, POSITIONS) if core.logs else ""
+        self.chars = CharDb(core.char_db)
         self.floors = floors
         self.lock = threading.Lock()
         self.offset = 0
@@ -98,7 +97,7 @@ class LiveFeed:
 
     def mtime(self):
         try:
-            return os.path.getmtime(self.path)
+            return os.path.getmtime(self.path) if self.path else 0.0
         except OSError:
             return 0.0
 
@@ -109,6 +108,8 @@ class LiveFeed:
                 return
             self.polled = now
             try:
+                if not self.path:
+                    raise OSError
                 st = os.stat(self.path)
             except OSError:
                 self.reset()
@@ -283,3 +284,158 @@ def recent_events(logs, newest_ts, map_id, seconds=1800, name=None, kinds=None, 
         out.append({"t": f[0][:19], "bot": f[1], "event": f[2], "kind": kind, "level": level, "map": w[0],
                     "detail": ", ".join(x for x in f[7:9] if x)[:120], "x": w[1], "y": w[2]})
     return out[-limit:]
+
+
+DB_TRAIL_MAX = 240
+ACCOUNTS_TTL_S = 300
+
+
+class DbFeed:
+    def __init__(self, core):
+        self.core = core
+        self.info = core.char_db
+        self.login = core.login_db
+        self.lock = threading.Lock()
+        self.bots = {}
+        self.trails = collections.defaultdict(collections.deque)
+        self.polled = 0.0
+        self.ok_at = 0.0
+        self.error = ""
+        self.bot_accounts = set()
+        self.accounts_at = 0.0
+        self.newest = 0
+        self.newest_ts = None
+        self.guilds = {}
+
+    @staticmethod
+    def connect(info):
+        import pymysql
+        return pymysql.connect(host=info.host, port=info.port, user=info.user, password=info.password,
+                               database=info.database, connect_timeout=5, read_timeout=15, autocommit=True)
+
+    def refresh_accounts(self):
+        if not self.login or not self.core.bot_prefix or time.time() - self.accounts_at < ACCOUNTS_TTL_S:
+            return
+        self.accounts_at = time.time()
+        try:
+            conn = self.connect(self.login)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("select id from account where username like %s", (self.core.bot_prefix + "%",))
+                    self.bot_accounts = {int(r[0]) for r in cur.fetchall()}
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
+    def fetch(self):
+        gid = "guild_id" if self.core.flavor == "vmangos" else "guildid"
+        conn = self.connect(self.info)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("select guid, account, name, race, class, level, map, zone, position_x, position_y,"
+                            " position_z, orientation, money, health from characters where online = 1")
+                rows = cur.fetchall()
+                try:
+                    cur.execute(f"select m.guid, g.name from guild_member m join guild g on g.{gid} = m.{gid}"
+                                " join characters c on c.guid = m.guid where c.online = 1")
+                    guilds = {int(g): n for g, n in cur.fetchall()}
+                except Exception:
+                    guilds = {}
+        finally:
+            conn.close()
+        return rows, guilds
+
+    def poll(self):
+        with self.lock:
+            now = time.time()
+            if not self.info or now - self.polled < self.core.db_poll_s:
+                return
+            self.polled = now
+        self.refresh_accounts()
+        try:
+            rows, guilds = self.fetch()
+        except Exception as exc:
+            with self.lock:
+                self.error = str(exc)[:200]
+            return
+        with self.lock:
+            self.guilds = guilds
+            self.error = ""
+            self.ok_at = now
+            epoch = int(now)
+            self.newest = epoch
+            self.newest_ts = time.strftime(telemetry.TS_FMT, time.localtime(now))
+            seen = set()
+            for guid, account, name, race, cls, level, map_id, zone, x, y, z, o, money, health in rows:
+                guid = int(guid)
+                seen.add(guid)
+                alive = (health or 0) > 0
+                row = {"guid": guid, "name": name, "bot": int(account) in self.bot_accounts, "map": int(map_id),
+                       "inst": 0, "x": float(x), "y": float(y), "z": float(z), "o": float(o), "zone": int(zone or 0),
+                       "area": 0, "level": int(level), "hp": 100 if alive else 0, "power": 0, "flags": 16 if alive else 2,
+                       "leader": 0, "money": int(money or 0), "race": int(race), "cls": int(cls), "epoch": epoch}
+                prev = self.bots.get(guid)
+                if prev is None or (prev["x"], prev["y"], prev["map"]) != (row["x"], row["y"], row["map"]):
+                    row["moved"] = epoch
+                    trail = self.trails[guid]
+                    trail.append((epoch, row["map"], row["x"], row["y"], row["flags"]))
+                    while len(trail) > DB_TRAIL_MAX:
+                        trail.popleft()
+                else:
+                    row["moved"] = prev["moved"]
+                self.bots[guid] = row
+            for guid in [g for g in self.bots if g not in seen]:
+                del self.bots[guid]
+                self.trails.pop(guid, None)
+
+    def is_live(self):
+        return time.time() - self.ok_at < 3 * max(self.core.db_poll_s, 20)
+
+    def mtime(self):
+        return self.ok_at
+
+    def snapshot(self, map_id=None):
+        self.poll()
+        with self.lock:
+            rows = list(self.bots.values())
+            newest, newest_ts = self.newest, self.newest_ts
+        maps = collections.Counter(r["map"] for r in rows)
+        players = collections.Counter(r["map"] for r in rows if not r["bot"])
+        if map_id is not None:
+            rows = [r for r in rows if r["map"] == map_id]
+        out = [[r["guid"], r["name"], 1 if r["bot"] else 0, r["map"], r["inst"], round(r["x"], 1), round(r["y"], 1),
+                round(r["z"], 1), r["o"], r["zone"], r["area"], r["level"], r["hp"], r["power"], r["flags"], r["leader"],
+                r["money"], r["race"], r["cls"], None, newest - r["moved"]] for r in rows]
+        return {
+            "core": self.core.name, "live": self.is_live(), "newest": newest_ts, "epoch": newest, "source": "db",
+            "poll_s": self.core.db_poll_s, "error": self.error,
+            "maps": [{"id": m, "bots": n, "players": players.get(m, 0)} for m, n in maps.most_common()],
+            "cols": COLS, "bots": out,
+        }
+
+    def bot(self, guid):
+        self.poll()
+        with self.lock:
+            row = self.bots.get(guid)
+            trail = list(self.trails.get(guid, ()))
+            newest = self.newest
+        if not row:
+            return None
+        race = row["race"]
+        out = {k: v for k, v in row.items() if k != "moved"}
+        out.update({"race_name": RACES.get(race, ""), "class_name": CLASSES.get(row["cls"], ""),
+                    "faction": "Horde" if race in HORDE else ("Alliance" if race else ""), "age": newest - row["moved"],
+                    "floor": None, "state": "position at last save", "source": "db", "leader_name": "",
+                    "guild": self.guilds.get(guid, ""), "ts": self.newest_ts})
+        out["trail"] = [[t[2], t[3], t[4], t[1]] for t in trail]
+        return out
+
+    def find(self, text, limit=20):
+        self.poll()
+        text = text.lower()
+        with self.lock:
+            hits = [r for r in self.bots.values() if text in r["name"].lower()]
+        hits.sort(key=lambda r: (not r["name"].lower().startswith(text), r["bot"], r["name"]))
+        return [{"guid": r["guid"], "name": r["name"], "map": r["map"], "level": r["level"], "bot": r["bot"]}
+                for r in hits[:limit]]

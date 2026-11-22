@@ -108,7 +108,23 @@ function paintedContinent(id) {
   return info ?info.basemaps.find(b => b.kind === 'zone' && !b.area) || null : null;
 }
 
-function wSaveLayers() { store('wlayers', JSON.stringify(W.on)); }
+function wSaveLayers() {
+  const keep = { ...W.on };
+  for (const k of W.hidden || []) keep[k] = W.pref ? !!W.pref[k] : false;
+  store('wlayers', JSON.stringify(keep));
+}
+
+function layerStatus(key) {
+  const l = W.caps && W.caps.layers ? W.caps.layers[key] : null;
+  return l ? l.status : 'ok';
+}
+
+function applyCaps(caps) {
+  W.caps = caps;
+  W.pref = { ...W.on };
+  W.hidden = new Set(Object.keys(W.on).filter(k => layerStatus(k) === 'missing'));
+  for (const k of W.hidden) W.on[k] = false;
+}
 
 async function wapi(path, opts) {
   const gen = W.gen;
@@ -159,6 +175,7 @@ function passesFilter(r) {
   switch (W.filter) {
     case 'players': {
       if (!col(r, 'bot')) return true;
+      if (W.snap.source === 'db') return false;
       const leader = col(r, 'leader');
       return leader && W.snap.playerGuids.has(leader);
     }
@@ -184,6 +201,7 @@ async function worldPage(core, mapId) {
   view.textContent = '';
   const first = await wapi('live' + (core ? '?core=' + encodeURIComponent(core) : ''));
   W.core = first.core;
+  try { applyCaps(await wapi(`capabilities?core=${encodeURIComponent(W.core)}`)); } catch (e) { applyCaps(null); }
   const artParam = new URLSearchParams(location.search).get('art');
   const cutParam = new URLSearchParams(location.search).get('cut');
   W.cut = cutParam !== null && cutParam !== '' && !isNaN(cutParam) ? +cutParam : null;
@@ -310,13 +328,22 @@ async function worldPage(core, mapId) {
   renderStyle();
   for (const [key, label] of [['bots', 'bots'], ['names', 'names'], ['labels', worldScene() ? 'zone + map names' : 'zone names'], ['zonelv', 'zone levels'], ['events', 'deaths / quests / levels'],
     ['intents', 'travel intent'], ['tests', 'tests run here'], ['steep', 'too steep to walk'], ['swim', 'swimming water'], ['npcs', 'NPCs'], ['objects', 'objects'], ['nodes', 'travel nodes'], ['tele', 'teleport cache']]) {
-    const chip = el('span', { class: 'chip' + (W.on[key] ? ' on' : '') }, label);
+    if (W.hidden.has(key)) continue;
+    const info = W.caps && W.caps.layers ? W.caps.layers[key] : null;
+    const approx = info && info.status === 'degraded';
+    const chip = el('span', { class: 'chip' + (W.on[key] ? ' on' : ''), title: info && info.source ? 'from ' + info.source : null },
+      label, approx ? el('span', { class: 'approx' }, 'approx.') : null);
     chip.onclick = () => {
       W.on[key] = !W.on[key]; chip.classList.toggle('on', W.on[key]); wSaveLayers();
       applyLayer(key);
       updateLayerBadge();
     };
     chips.append(chip);
+  }
+  if (W.hidden.size) {
+    const first = [...W.hidden].find(k => k !== 'tests') || [...W.hidden][0];
+    chips.after(el('div', { class: 'wdmore' }, el('a', { href: `/help#layer-${W.core}-${first}`, 'data-link': 1 },
+      `${W.hidden.size} more layer${W.hidden.size === 1 ? '' : 's'} available here — how?`)));
   }
   updateLayerBadge();
   for (const key of Object.keys(W.on)) applyLayer(key);
@@ -985,7 +1012,9 @@ function ingestSnapshot(snap) {
   redrawBots();
   if (worldScene()) updateLod();
   const lost = allWorld() && W.on.dungeons && optionApplies('dungeons') && W.notPlaced ? ' / not placed: ' + W.notPlaced : '';
-  const age = snap.live ? 'live' : 'not live (server stopped or positions log off)';
+  const age = W.hidden && W.hidden.has('bots') ? 'map only, no player data set up (see Help)' : snap.source === 'db'
+    ? (snap.live ? `positions at last save (characters DB, every ${snap.poll_s} s)` : 'characters DB not reachable' + (snap.error ? ': ' + snap.error : ''))
+    : (snap.live ? 'live' : 'not live (server stopped or positions log off)');
   const where = W.info && W.info.name ? W.info.name : '';
   W.ui.status.textContent = `${where}${where ? ' · ' : ''}${snap.core} · ${age} · ${worldScene() ? W.markers.size : snap.bots.length} here · ${snap.newest ? snap.newest.slice(11) : 'no data yet'}${lost}`;
   if (W.selected) refreshSelected();
@@ -1298,6 +1327,8 @@ function drawTrail(card) {
   if (run.length > 1) solid(run.map(p => p.pos));
 }
 
+function ago(s) { return s < 90 ? s + ' s ago' : s < 5400 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; }
+
 function money(c) { return `${Math.floor(c / 10000)}g ${Math.floor(c / 100) % 100}s ${c % 100}c`; }
 
 function renderCard(c) {
@@ -1314,7 +1345,9 @@ function renderCard(c) {
         el('div', { class: 'meta' }, `level ${c.level} ${c.race_name} ${c.class_name}${c.faction ? ' · ' + c.faction : ''}`)),
       el('div', { class: 'sheetbtns' }, followBtn, el('button', { class: 'ghost', onclick: closeSheet }, '✕'))),
     el('div', { class: 'meta' }, `${c.map_name}${where ? ' · ' + where : ''}${c.floor ? ' · floor ' + c.floor : ''}`),
-    el('div', { class: 'meta' }, `${c.state} · hp ${c.hp}% · power ${c.power}% · ${money(c.money)}${c.leader_name ? ' · group leader ' + c.leader_name : ''} · seen ${c.age}s ago`),
+    c.source === 'db'
+      ? el('div', { class: 'meta' }, el('span', { class: 'badge approxb' }, 'position at last save'), ` ${money(c.money)}${c.guild ? ' · <' + c.guild + '>' : ''} · moved ${ago(c.age)}`)
+      : el('div', { class: 'meta' }, `${c.state} · hp ${c.hp}% · power ${c.power}% · ${money(c.money)}${c.leader_name ? ' · group leader ' + c.leader_name : ''} · seen ${c.age}s ago`),
     c.runs.length ? el('div', { class: 'meta' }, 'tests: ', ...c.runs.slice(0, 4).map(r => el('a', { href: `/r/${r.id}`, 'data-link': 1, style: 'margin-right:8px' }, verdict(r.verdict), ' ', prettyTest(r.test).slice(0, 40)))) : null,
     el('details', { open: open ? 'open' : null }, el('summary', { class: 'meta' }, `last hour: ${c.events.length} events`),
       el('div', { class: 'list' }, c.events.slice().reverse().map(e => el('div', { class: 'meta' }, `${e.t.slice(11)} ${e.event.replace(/Action$/, '')}${e.detail ? ' · ' + e.detail : ''}`))))].filter(Boolean));
