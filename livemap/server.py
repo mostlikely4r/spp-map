@@ -77,6 +77,8 @@ class Handler(BaseHTTPRequestHandler):
                 ctx = self.app.cores.get(core)
                 if not ctx:
                     file = None
+                elif name.startswith("model_") and name.endswith(".webp") and name[6:-5].isdigit():
+                    file = self.app.terrain.model_image(core, int(name[6:-5]))
                 elif name.endswith(".webp"):
                     file = ctx.basemaps.image_for_key(name[:-5])
                 else:

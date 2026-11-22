@@ -391,7 +391,7 @@ function toggleOption(key) {
 
 function groundChanged() {
   renderStyle();
-  if (!worldScene()) drawBase();
+  drawBase();
   if (W.terrain) W.terrain.sync();
   syncSceneGround(true);
 }
@@ -654,7 +654,9 @@ function drawScene() {
       inst.back = L.rectangle(back, { color, weight: 1.5, dashArray: m.tray ? '6 4' : null, fillColor: '#0b0f14', fillOpacity: 0.72, pane: 'instback', renderer: W.backRenderer }).addTo(W.layers.base);
     }
     const open = ev => { L.DomEvent.stop(ev); go(`/w/${W.core}/${m.id}`); };
-    if (m.base) inst.img = L.imageOverlay(`/basemap/${W.core}/${m.base.key}.webp`, box, { pane: 'instimg', interactive: true }).on('click', open).addTo(W.layers.base);
+    const model = m.model && W.art === 'minimap' && terrainPrefs().detailed ? m.model : null;
+    if (model) inst.img = L.imageOverlay(`/basemap/${W.core}/${model.key}.webp?v=${model.v}`, offBox(m.id, model.bounds), { pane: 'instimg', interactive: true }).on('click', open).addTo(W.layers.base);
+    else if (m.base) inst.img = L.imageOverlay(`/basemap/${W.core}/${m.base.key}.webp`, box, { pane: 'instimg', interactive: true }).on('click', open).addTo(W.layers.base);
     else inst.plain = L.rectangle(box, { color: '#576574', weight: 1, fill: false, interactive: true }).on('click', open).addTo(W.layers.base);
     W.inst.push(inst);
   }

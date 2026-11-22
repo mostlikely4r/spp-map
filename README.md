@@ -29,6 +29,9 @@ What works today:
   the patchy client minimap pieces, at every zoom. A **level** slider cuts away everything above a
   height so stacked levels can be read one at a time (bots above the cut are dimmed; `cut=<z>` in the
   link and in the tile request).
+  The same render is used for these dungeons where they are overlaid on the World and continent maps
+  (one cached picture per dungeon, `data/models/<core>/v<n>/<map>.webp`, drawn in the background after
+  the dungeon layout is built), whenever minimap mode and real terrain are on.
 - **Map badge in the test list.** Each test shows whether its latest run has position data to plot
   (`map` / `no map`), with filters for both. The check runs once per run in the background (newest
   first) and is stored in the catalog (`previews` table).

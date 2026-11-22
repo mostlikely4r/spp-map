@@ -49,6 +49,8 @@ NO_BUILDINGS = "-nobld"
 INSIDE = "-inside"
 VARIANT = re.compile(r"^([a-z]+)(-nobld|-inside)?(?:-cut(-?\d+))?$")
 WMO_MIN_LEVEL = -4
+MODEL_CELL_PX = 512
+MODEL_MAX_CELLS = 49
 INTERIOR_GROUP = 0x2000
 INSIDE_LIFT = 4096.0
 
@@ -899,6 +901,60 @@ class Terrain:
             "wmopix": Lru(max_bytes=8 * 1024 * 1024, sizer=lambda a: a.nbytes),
         }
         self.executor = self.new_executor()
+        self.model_locks = {}
+
+    def model_entry(self, core_name, map_id):
+        try:
+            info = self.resolve(core_name, map_id)
+        except Exception:
+            return None
+        if not info:
+            return None
+        renderer, directory = info["renderer"], info["directory"]
+        if renderer.first_tile(directory) is not None or not renderer.global_wmo(directory):
+            return None
+        ext = renderer.wmo_extent(directory)
+        if not ext:
+            return None
+        bounds = {k: ext[k] for k in ("top", "bottom", "left", "right")}
+        return {"key": f"model_{int(map_id)}", "bounds": bounds, "v": RENDER_VERSION}
+
+    def model_image(self, core_name, map_id):
+        entry = self.model_entry(core_name, map_id)
+        if not entry:
+            return None
+        path = os.path.join(self.cfg.data_dir, "models", SAFE.sub("_", core_name.lower()), f"v{RENDER_VERSION}", f"{int(map_id)}.webp")
+        if os.path.exists(path):
+            return path
+        with self.lock:
+            lock = self.model_locks.setdefault((core_name, int(map_id)), threading.Lock())
+        with lock:
+            if os.path.exists(path):
+                return path
+            info = self.resolve(core_name, map_id)
+            renderer, directory = info["renderer"], info["directory"]
+            b = entry["bounds"]
+            c0, c1 = int((GRID_YD - b["left"]) // ADT_YD), int((GRID_YD - b["right"]) // ADT_YD)
+            r0, r1 = int((GRID_YD - b["top"]) // ADT_YD), int((GRID_YD - b["bottom"]) // ADT_YD)
+            if (c1 - c0 + 1) * (r1 - r0 + 1) > MODEL_MAX_CELLS:
+                return None
+            canvas = Image.new("RGBA", ((c1 - c0 + 1) * MODEL_CELL_PX, (r1 - r0 + 1) * MODEL_CELL_PX), (0, 0, 0, 0))
+            for col in range(c0, c1 + 1):
+                for row in range(r0, r1 + 1):
+                    img = renderer.image(directory, col, row, "soft")
+                    if img is not None:
+                        canvas.alpha_composite(img.resize((MODEL_CELL_PX, MODEL_CELL_PX), Image.LANCZOS),
+                                               ((col - c0) * MODEL_CELL_PX, (row - r0) * MODEL_CELL_PX))
+            k = MODEL_CELL_PX / ADT_YD
+            left0, top0 = GRID_YD - c0 * ADT_YD, GRID_YD - r0 * ADT_YD
+            box = ((left0 - b["left"]) * k, (top0 - b["top"]) * k, (left0 - b["right"]) * k, (top0 - b["bottom"]) * k)
+            size = (max(1, round(box[2] - box[0])), max(1, round(box[3] - box[1])))
+            out = canvas.transform(size, Image.EXTENT, box, Image.BILINEAR)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + ".tmp"
+            out.save(tmp, "WEBP", quality=88, method=4)
+            os.replace(tmp, path)
+            return path
 
     def new_executor(self):
         return ThreadPoolExecutor(max_workers=max(1, min(8, self.store.number("render_workers"))),

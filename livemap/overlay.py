@@ -239,7 +239,7 @@ def tray_row(pending, containers):
         x_edge = cx - h - TRAY_GAP
         out.append({"id": c["id"], "name": c["name"], "kind": c["kind"], "parent": None, "root": None,
                     "off": [off[0], off[1]], "off_honest": [off[0], off[1]], "door": [cx, y_centre],
-                    "base": c["base"], "extent": e, "moved": True, "links": [],
+                    "base": c["base"], "model": c.get("model"), "extent": e, "moved": True, "links": [],
                     "tray": True, "source": "tray", "fan": c["fan"]})
     return out
 
@@ -291,7 +291,8 @@ def build(ctx, mode, pick_base, overrides=None):
                 extent = None
         ov = overrides.get(map_id, {})
         entry = {"id": map_id, "name": info["name"], "kind": kinds.get(map_id, "other"), "doors": ds,
-                 "base": base, "extent": extent, "fan": ov.get("fan", True) is not False}
+                 "base": base, "extent": extent, "fan": ov.get("fan", True) is not False,
+                 "model": ctx.app.terrain.model_entry(ctx.core.name, map_id)}
         if extent is None:
             unknown.append(entry)
             continue
@@ -309,7 +310,8 @@ def build(ctx, mode, pick_base, overrides=None):
         if extent is None:
             continue
         unknown.append({"id": map_id, "name": info["name"], "kind": kinds.get(map_id, "other"), "doors": [],
-                        "base": base, "extent": extent, "fan": True})
+                        "base": base, "extent": extent, "fan": True,
+                        "model": ctx.app.terrain.model_entry(ctx.core.name, map_id)})
 
     centre = {c["id"]: ((c["extent"]["top"] + c["extent"]["bottom"]) / 2 + c["off"][0],
                         (c["extent"]["left"] + c["extent"]["right"]) / 2 + c["off"][1]) for c in continents}
@@ -353,7 +355,7 @@ def build(ctx, mode, pick_base, overrides=None):
             placed[c["id"]] = {"id": c["id"], "name": c["name"], "kind": c["kind"], "parent": parent, "root": root,
                                "off": [off[0] + dx, off[1] + dy], "off_honest": [honest[0], honest[1]],
                                "door": [door[0], door[1]],
-                               "base": c["base"], "extent": c["extent"], "moved": bool(dx or dy),
+                               "base": c["base"], "model": c.get("model"), "extent": c["extent"], "moved": bool(dx or dy),
                                "links": [] if bare else [[list(a), list(b)] for a, b in zip(door_pts, landings)],
                                "tray": False, "source": source_of(used, parent), "fan": c["fan"]}
         if not rest or len(rest) == len(pending):

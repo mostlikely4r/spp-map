@@ -188,7 +188,17 @@ class App:
             return cached[1]
         result = overlay.build(ctx, mode, pick_base)
         self.overlay_cache[core] = ((mode, sig), result)
+        self.warm_models(core, [i["id"] for i in result["instances"] if i.get("model")])
         return result
+
+    def warm_models(self, core, map_ids):
+        def run():
+            for map_id in map_ids:
+                try:
+                    self.terrain.model_image(core, map_id)
+                except Exception as exc:
+                    print("model render failed:", core, map_id, exc)
+        threading.Thread(target=run, daemon=True, name="model-warm").start()
 
     def scene_offsets(self, core, mode, honest, focus=None, dungeons=True):
         ov = self.overlay(core, mode)
