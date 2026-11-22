@@ -18,6 +18,8 @@ from .worlddb import WorldDb
 MARGIN = 0.35
 SCENE_LIMIT = 600
 SCENE_NODES = 240
+FOCUS_NODES = 4000
+SCENE_PATH_SPAN = 10000
 
 
 class CoreContext:
@@ -196,7 +198,9 @@ class App:
             if kind in ("creatures", "objects"):
                 data = ctx.world.spawn_layer(kind, map_id, b, limit=SCENE_LIMIT)
             elif kind == "nodes":
-                data = ctx.world.travel_nodes(map_id, b, limit=SCENE_NODES, paths=False)
+                close = max(bounds["top"] - bounds["bottom"], bounds["left"] - bounds["right"]) <= SCENE_PATH_SPAN
+                data = ctx.world.travel_nodes(map_id, b, limit=SCENE_NODES if focus is None else FOCUS_NODES,
+                                              paths=close)
             else:
                 data = ctx.layers.telecache.layer(map_id, b, kinds, limit=SCENE_LIMIT)
             out["maps"].append(map_id)

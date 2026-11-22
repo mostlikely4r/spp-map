@@ -242,18 +242,27 @@ class WorldDb:
             f" from ai_playerbot_travelnode_link where node_id in ({marks})", ids)
         links = [(a, b, t) for a, b, t, *_ in rows]
         danger = {(a, b): [int(m0), int(m1), int(m2)] for a, b, t, m0, m1, m2 in rows}
-        walk = {(a, b) for a, b, t in links if t == 1 and a in nodes and b in nodes}
+        far = {}
+        missing = sorted({b for a, b, t in links if b not in nodes})
+        if missing:
+            fmarks = ",".join(["%s"] * len(missing))
+            far = {nid: {"x": float(x), "y": float(y)} for nid, x, y in self.rows(
+                f"select id, x, y from ai_playerbot_travelnode where map_id=%s and id in ({fmarks})", [map_id] + missing)}
+        ends = {**far, **nodes}
+        walk = {(a, b) for a, b, t in links if t == 1 and a in nodes and b in ends}
+        walk |= {(b, a) for a, b in walk}
         walked = {}
         if walk and paths:
             for a, b, x, y in self.rows(
                     f"select node_id, to_node_id, x, y from ai_playerbot_travelnode_path where map_id=%s"
-                    f" and node_id in ({marks}) order by node_id, to_node_id, nr", [map_id] + ids):
+                    f" and (node_id in ({marks}) or to_node_id in ({marks})) order by node_id, to_node_id, nr",
+                    [map_id] + ids + ids):
                 if (a, b) in walk:
                     walked.setdefault((a, b), []).append([float(x), float(y)])
         out_links = []
         seen = set()
         for a, b, t in links:
-            if b not in nodes and t == 1:
+            if b not in ends:
                 continue
             pair = (min(a, b), max(a, b), t)
             if pair in seen:
@@ -261,8 +270,6 @@ class WorldDb:
             seen.add(pair)
             pts = walked.get((a, b)) or walked.get((b, a))
             if not pts:
-                if b not in nodes:
-                    continue
-                pts = [[nodes[a]["x"], nodes[a]["y"]], [nodes[b]["x"], nodes[b]["y"]]]
+                pts = [[nodes[a]["x"], nodes[a]["y"]], [ends[b]["x"], ends[b]["y"]]]
             out_links.append({"type": t, "points": pts, "danger": danger.get((a, b)) or danger.get((b, a)) or [0, 0, 0]})
         return {"nodes": list(nodes.values()), "links": out_links}
