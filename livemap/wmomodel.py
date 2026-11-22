@@ -86,6 +86,7 @@ def parse_group(data):
     off, size = parts["MOGP"][0]
     if size < 68:
         return None
+    flags = struct.unpack_from("<I", data, off + 8)[0]
     bbox_min = struct.unpack_from("<3f", data, off + 12)
     bbox_max = struct.unpack_from("<3f", data, off + 24)
     inner = chunks(data, off + 68, off + size)
@@ -118,7 +119,7 @@ def parse_group(data):
         uv_off, uv_size = inner["MOTV"][0]
         if uv_size // 8 == len(verts):
             uvs = np.frombuffer(data, "<f4", uv_size // 4, uv_off).reshape(-1, 2).astype(np.float32)
-    return {"verts": verts, "tris": tris, "mats": mats, "uvs": uvs, "bbox": (bbox_min, bbox_max)}
+    return {"verts": verts, "tris": tris, "mats": mats, "uvs": uvs, "bbox": (bbox_min, bbox_max), "flags": flags}
 
 
 def transform(verts, position, rotation, scale):

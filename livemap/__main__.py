@@ -55,6 +55,7 @@ def cmd_serve(cfg, args):
     print(f"indexing results for {', '.join(cfg.cores)} ...", flush=True)
     print(f"added {app.ingest()} results", flush=True)
     app.start_ingest_loop()
+    app.start_preview_loop()
     server = serve(app)
     print(f"livemap on http://{cfg.host}:{cfg.port}  (local access needs no token)", flush=True)
     tunnel = start_tunnel(cfg, os.path.join(cfg.data_dir, "remote_url.txt")) if args.tunnel else None

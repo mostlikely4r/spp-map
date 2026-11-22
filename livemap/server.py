@@ -117,7 +117,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(cat.tests(
                 core=q.get("core"), family=q.get("family"), verdict=q.get("verdict"), q=q.get("q"),
                 bucket=q.get("bucket"), flipped=q.get("flipped") == "1",
-                limit=min(int(q.get("limit", 100)), 500), offset=int(q.get("offset", 0))))
+                limit=min(int(q.get("limit", 100)), 500), offset=int(q.get("offset", 0)), preview=q.get("preview")))
         if method == "GET" and name == "test":
             core, test = q["core"], q["test"]
             history = cat.history(core, test)
@@ -237,7 +237,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             query = parse_qs(urlparse(self.path).query)
             data = self.app.terrain.tile(core, int(map_id), int(z), int(x), int(y), query.get("shade", [None])[0],
-                                         query.get("bld", ["1"])[0] != "0")
+                                         {"0": "off", "2": "inside"}.get(query.get("bld", ["1"])[0], "roofs"))
         except (TypeError, ValueError):
             return self.send_text(404, "bad tile path")
         if not data:

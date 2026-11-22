@@ -1,6 +1,6 @@
 'use strict';
 
-const state = { core: store('core') || '', verdict: '', family: '', bucket: '', flipped: false, q: '', offset: 0 };
+const state = { core: store('core') || '', verdict: '', family: '', bucket: '', preview: '', flipped: false, q: '', offset: 0 };
 const view = document.getElementById('view');
 let summaryCache = null;
 let mapObj = null;
@@ -107,7 +107,7 @@ function chipRow(options, key) {
 
 async function homePage() {
   const q = new URLSearchParams();
-  for (const k of ['core', 'verdict', 'family', 'bucket', 'q']) if (state[k]) q.set(k, state[k]);
+  for (const k of ['core', 'verdict', 'family', 'bucket', 'preview', 'q']) if (state[k]) q.set(k, state[k]);
   if (state.flipped) q.set('flipped', '1');
   q.set('limit', 60); q.set('offset', state.offset);
   const families = await api('families');
@@ -130,7 +130,9 @@ async function homePage() {
     el('div', { class: 'chips' },
       el('span', { class: 'chip' + (state.flipped ? ' on' : ''), onclick: () => { state.flipped = !state.flipped; state.offset = 0; homePage(); } }, 'just flipped'),
       ...['bug', 'fluke', 'gap', 'fixed'].map(b => el('span', { class: 'chip' + (state.bucket === b ? ' on' : ''),
-        onclick: () => { state.bucket = state.bucket === b ? '' : b; state.offset = 0; homePage(); } }, 'triage: ' + b))),
+        onclick: () => { state.bucket = state.bucket === b ? '' : b; state.offset = 0; homePage(); } }, 'triage: ' + b)),
+      ...[['yes', 'with map'], ['no', 'no map']].map(([v, label]) => el('span', { class: 'chip' + (state.preview === v ? ' on' : ''),
+        onclick: () => { state.preview = state.preview === v ? '' : v; state.offset = 0; homePage(); } }, label))),
     el('div', { class: 'list' }, rows.map(testRow)),
     rows.length === 60 ? el('button', { class: 'ghost more', onclick: () => { state.offset += 60; homePage(); } }, 'next page') : null,
     state.offset ? el('button', { class: 'ghost more', onclick: () => { state.offset = Math.max(0, state.offset - 60); homePage(); } }, 'previous page') : null,
@@ -283,7 +285,9 @@ function testRow(r) {
   return el('a', { class: 'row', href: testLink(r.core, r.test), 'data-link': 1 },
     el('div', { class: 'name' }, verdict(r.verdict), ' ', prettyTest(r.test),
       flipped ? el('span', { class: 'badge flip' }, 'flipped') : null,
-      r.bucket ? el('span', { class: 'badge ' + r.bucket }, r.bucket) : null),
+      r.bucket ? el('span', { class: 'badge ' + r.bucket }, r.bucket) : null,
+      r.preview === null || r.preview === undefined ? null
+        : el('span', { class: 'badge ' + (r.preview > 0 ? 'map' : 'nomap'), title: r.preview > 0 ? 'the latest run has a track to show on the map' : 'no position data for the latest run' }, r.preview > 0 ? 'map' : 'no map')),
     el('div', { class: 'meta' }, `${r.core} · ${r.runs} runs · ${r.passes} pass · ${short(r.ts)} · ${r.host}`),
     r.verdict !== 'PASS' ? el('div', { class: 'msg' }, r.msg) : null);
 }

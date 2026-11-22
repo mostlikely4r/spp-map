@@ -24,6 +24,9 @@ What works today:
 - **Test explorer.** Every `[BOTTEST]` result from every boot and every core goes into one small
   database: latest verdict, run history, pass rate, **"flipped to PASS"** and **regression** feeds,
   failures grouped by message, and a triage label per test (bug / fluke / gap / fixed + note).
+- **Map badge in the test list.** Each test shows whether its latest run has position data to plot
+  (`map` / `no map`), with filters for both. The check runs once per run in the background (newest
+  first) and is stored in the catalog (`previews` table).
 - **Run page.** Verdict, message, a timeline of the host bot's events and states, and a map with the
   bot's track plus the quest's giver, objective and turn-in spawns (from the world database) and the
   bots' travel network (nodes + stored walking paths).
@@ -78,8 +81,9 @@ What works today:
   (soft / medium / strong / flat) and a "detailed ground" on/off chip in the map's layer drawer, and a
   Settings section for the cache, the shading default, worker count and client folders. Buildings
   (world models placed in the terrain) are drawn on top of the ground, so towns read as towns and the
-  terrain holes are filled by the building instead of the minimap doodle. A **buildings + caves** chip in the ground controls turns them off to show the bare terrain (tiles
-  are requested with `bld=0` and cached separately). See
+  terrain holes are filled by the building instead of the minimap doodle. Three building modes in the map style options: **no buildings** (bare terrain, `bld=0`), **roofs**
+  (default) and **insides** (`bld=2`: interior groups win over exterior ones, so buildings and caves
+  show their floors instead of their roofs). Each mode is cached separately. See
   [Ground (terrain) layer](#ground-terrain-layer).
 
 - **One button for the controls.** The live map keeps the map itself full-screen: a single floating

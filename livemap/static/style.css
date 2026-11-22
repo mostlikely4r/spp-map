@@ -34,6 +34,7 @@ button.ghost { background: var(--panel2); color: var(--text); }
 .row .msg { font-size: 13px; margin-top: 4px; color: #cfd2d8; word-break: break-word; }
 .badge { font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--panel2); color: var(--muted); margin-left: 4px; }
 .badge.flip { background: #1c4a2a; color: #8ff0a8; } .badge.gap { background: #4a2a4a; color: #f0a8f0; }
+.badge.map { background: #1c3a4a; color: #8fd8f0; } .badge.nomap { background: #2a2a2e; color: #77777f; }
 .badge.bug { background: #4a1f1c; color: #f0a8a0; } .badge.fluke { background: #3a3a2a; color: #e0e0a0; } .badge.fixed { background: #1c3a4a; color: #a0d8f0; }
 h2 { font-size: 17px; margin: 18px 0 8px; }
 h1 { font-size: 18px; margin: 4px 0 4px; word-break: break-word; }

@@ -116,6 +116,24 @@ class App:
                 time.sleep(every)
         threading.Thread(target=loop, daemon=True, name="ingest").start()
 
+    def start_preview_loop(self, pause=0.2, idle=30.0):
+        def loop():
+            while True:
+                ids = []
+                try:
+                    ids = self.catalog.missing_previews(20)
+                    for run_id in ids:
+                        try:
+                            self.run_view(run_id)
+                        except Exception:
+                            self.catalog.set_preview(run_id, -1, None)
+                        time.sleep(pause)
+                except Exception as exc:
+                    print("preview check failed:", exc)
+                if not ids:
+                    time.sleep(idle)
+        threading.Thread(target=loop, daemon=True, name="previews").start()
+
     def live_core(self):
         def score(ctx):
             try:
@@ -254,6 +272,7 @@ class App:
             return None
         ctx = self.cores.get(run["core"])
         if ctx is None:
+            self.catalog.set_preview(run_id, -1, None)
             return {"run": run, "notice": [f"core {run['core']} is not configured"]}
         logs = ctx.core.logs
         record = telemetry.test_records(logs, run["host"], run["test"], run["ts"])
@@ -315,6 +334,7 @@ class App:
                 notice.append("coarse track from bot_states.csv (heartbeat not available for this run)")
         if map_id is not None and not basemap:
             notice.append("no painted map for this area yet; showing positions on a plain grid")
+        self.catalog.set_preview(run_id, len(world_track), map_id)
         return {
             "run": run,
             "terrain_render": self.terrain.describe(run["core"], map_id) if map_id is not None else None,

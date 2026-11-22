@@ -46,6 +46,9 @@ SHADING = {
 }
 SHADE_NAMES = ("soft", "medium", "strong", "flat")
 NO_BUILDINGS = "-nobld"
+INSIDE = "-inside"
+INTERIOR_GROUP = 0x2000
+INSIDE_LIFT = 4096.0
 
 WATER_COLOUR = {
     "water": (0.16, 0.30, 0.36),
@@ -336,7 +339,7 @@ def render_adt(adt, textures, preset, pad, buildings=None):
     return Image.fromarray(out, "RGBA")
 
 
-def draw_buildings(renderer, placements, left, top):
+def draw_buildings(renderer, placements, left, top, inside=False):
     yard_px = CHUNK_YD / PPC
     size = ADT_PX
     zbuf = np.full(size * size, -np.inf, np.float32)
@@ -391,7 +394,8 @@ def draw_buildings(renderer, placements, left, top):
                     atlas.append(renderer.wmo_texture(name_t))
                 tex[mats[sel] == mat] = slot
             t = tris[sel]
-            batches.append((px[t], py[t], wz[t].astype(np.float32), uvs[t], tex,
+            lift = INSIDE_LIFT if inside and group.get("flags", 0) & INTERIOR_GROUP else 0.0
+            batches.append((px[t], py[t], wz[t].astype(np.float32) + lift, uvs[t], tex,
                             (BUILD_AMBIENT + (1.0 - BUILD_AMBIENT) * upness[sel]).astype(np.float32)))
     if not batches:
         return np.zeros((size, size, 3), np.float32), np.zeros((size, size), bool)
@@ -632,14 +636,16 @@ class Renderer:
         if adt is None:
             return None
         bare = shade.endswith(NO_BUILDINGS)
-        preset = SHADING.get(shade[:-len(NO_BUILDINGS)] if bare else shade) or SHADING["soft"]
+        inside = shade.endswith(INSIDE)
+        base = shade[:-len(NO_BUILDINGS)] if bare else shade[:-len(INSIDE)] if inside else shade
+        preset = SHADING.get(base) or SHADING["soft"]
         pad = padded_heights(self, directory, col, row)
         buildings = None
         placements = None if bare else neighbour_placements(self, directory, col, row)
         if placements:
             left = GRID_YD - col * ADT_YD
             top = GRID_YD - row * ADT_YD
-            drawn = draw_buildings(self, placements, left, top)
+            drawn = draw_buildings(self, placements, left, top, inside)
             if drawn[1].any():
                 buildings = drawn
         image = render_adt(adt, self.textures, preset, pad, buildings)
@@ -997,7 +1003,7 @@ class Terrain:
             threading.Thread(target=renderer.prefetch, args=(job[2], job[3], job[4]),
                              daemon=True, name="adt-prefetch").start()
 
-    def tile(self, core_name, map_id, z, x, y, shade=None, buildings=True):
+    def tile(self, core_name, map_id, z, x, y, shade=None, buildings="roofs"):
         grabbed = tile_coords(int(z), int(x), int(y))
         if grabbed is None or core_name not in self.cfg.cores:
             return None
@@ -1006,8 +1012,10 @@ class Terrain:
         if not info:
             return None
         shade = shade if shade in SHADING else self.store.shade()
-        if not buildings:
+        if buildings == "off":
             shade += NO_BUILDINGS
+        elif buildings == "inside":
+            shade += INSIDE
         image = self.image(core_name, info, shade, col, row)
         if image is None:
             return None

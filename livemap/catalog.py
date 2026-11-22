@@ -42,6 +42,12 @@ create table if not exists triage (
     updated text,
     primary key (core, test)
 );
+create table if not exists previews (
+    run_id integer primary key,
+    points integer not null,
+    map_id integer,
+    checked text
+);
 create table if not exists favorites (
     core text not null,
     bot text not null,
@@ -119,7 +125,7 @@ class Catalog:
         )
         return {"verdicts": cores, "tests": tests}
 
-    def tests(self, core=None, family=None, verdict=None, q=None, bucket=None, flipped=False, limit=100, offset=0):
+    def tests(self, core=None, family=None, verdict=None, q=None, bucket=None, flipped=False, limit=100, offset=0, preview=None):
         where, args = [], []
         if core:
             where.append("l.core=?"); args.append(core)
@@ -134,6 +140,10 @@ class Catalog:
             where.append("t.bucket=?"); args.append(bucket)
         if flipped:
             where.append("l.verdict='PASS' and l.prev in ('FAIL','ABORT','IMPOSSIBLE')")
+        if preview == "yes":
+            where.append("p.points > 0")
+        elif preview == "no":
+            where.append("p.points <= 0")
         sql = f"""
             with ordered as (
                 select r.*, lag(verdict) over (partition by core, test order by ts, id) prev,
@@ -143,8 +153,9 @@ class Catalog:
                 from runs r
             ), latest as (select * from ordered where rn=1)
             select l.id, l.core, l.test, l.verdict, l.prev, l.ts, l.host, l.msg, l.family, l.quest_id, l.variant,
-                   l.level, l.subject, l.runs, l.passes, t.bucket, t.note
+                   l.level, l.subject, l.runs, l.passes, t.bucket, t.note, p.points preview, p.map_id preview_map
             from latest l left join triage t on t.core=l.core and t.test=l.test
+            left join previews p on p.run_id=l.id
             {"where " + " and ".join(where) if where else ""}
             order by l.ts desc limit ? offset ?
         """
@@ -155,6 +166,19 @@ class Catalog:
             "select id, ts, host, verdict, msg, elapsed_s, source from runs where core=? and test=? order by ts desc, id desc",
             (core, test),
         )
+
+    def missing_previews(self, limit=20):
+        return [r["id"] for r in self.query(
+            "select r.id from runs r left join previews p on p.run_id=r.id where p.run_id is null"
+            " order by r.ts desc, r.id desc limit ?", (limit,))]
+
+    def set_preview(self, run_id, points, map_id):
+        with self.lock:
+            self.db.execute(
+                "insert into previews (run_id, points, map_id, checked) values (?, ?, ?, datetime('now'))"
+                " on conflict(run_id) do update set points=excluded.points, map_id=excluded.map_id, checked=excluded.checked",
+                (run_id, points, map_id))
+            self.db.commit()
 
     def run(self, run_id):
         return self.one("select * from runs where id=?", (run_id,))

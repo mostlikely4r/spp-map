@@ -26,6 +26,8 @@ const LM_CRS = Object.assign({}, L.CRS.Simple, {
   infinite: true,
 });
 const TERRAIN_SHADES = ['soft', 'medium', 'strong', 'flat'];
+const BUILDING_MODES = [['0', 'no buildings', 'bare terrain, no buildings or caves'],
+  ['1', 'roofs', 'buildings seen from above'], ['2', 'insides', 'floors inside buildings and caves instead of their roofs']];
 
 const W = {
   core: null, map: null, timer: null, slowTimer: null, markers: new Map(), selected: null, follow: false, info: null,
@@ -337,8 +339,8 @@ function renderStyle() {
     if (worldScene()) opts.append(chip('dungeons', W.on.dungeons, () => toggleOption('dungeons'), 'dungeons, raids and battlegrounds drawn at their entrances'));
     opts.append(chip('real terrain (on zoom)', p.detailed, () => { store('wdetail', p.detailed ? '0' : '1'); groundChanged(); },
       'draw the ground from the client terrain files when zoomed in'));
-    opts.append(chip('interiors', p.buildings, () => { store('wbld', p.buildings ? '0' : '1'); groundChanged(); },
-      'buildings and caves on the real terrain; off shows the bare ground'));
+    for (const [v, label, hint] of BUILDING_MODES)
+      opts.append(chip(label, p.bld === v, () => { store('wbld', v); groundChanged(); }, hint));
   }
   box.append(opts);
   if (mm && p.detailed)
@@ -375,7 +377,7 @@ const SceneGround = L.GridLayer.extend({
       const sx = x0 + src.off[1] * s, sy = y0 + src.off[0] * s;
       for (let ty = Math.floor(sy / 256); ty <= Math.floor((sy + 255) / 256); ty++)
         for (let tx = Math.floor(sx / 256); tx <= Math.floor((sx + 255) / 256); tx++) {
-          const url = `/tiles/${W.core}/adt/${src.id}/${coords.z}/${tx}/${ty}.webp?v=${src.info.version}&shade=${prefs.shade}${prefs.buildings ? '' : '&bld=0'}`;
+          const url = `/tiles/${W.core}/adt/${src.id}/${coords.z}/${tx}/${ty}.webp?v=${src.info.version}&shade=${prefs.shade}${bldParam(prefs)}`;
           jobs.push(new Promise(res => {
             const img = new Image();
             img.onload = () => { ctx.drawImage(img, tx * 256 - sx, ty * 256 - sy); res(); };
@@ -442,13 +444,15 @@ function terrainPrefs(info) {
   let shade = store('wshade');
   if (!TERRAIN_SHADES.includes(shade)) shade = TERRAIN_SHADES.includes(spec.shade) ? spec.shade : 'soft';
   const detailed = store('wdetail');
-  return { shade, detailed: detailed === null || detailed === undefined ? true : detailed === '1', buildings: store('wbld') !== '0' };
+  return { shade, detailed: detailed === null || detailed === undefined ? true : detailed === '1', bld: ['0', '1', '2'].includes(store('wbld')) ? store('wbld') : '1' };
 }
 
-function terrainKey(prefs) { return prefs.shade + (prefs.buildings ? '' : '-nobld'); }
+function terrainKey(prefs) { return prefs.shade + '-' + prefs.bld; }
+
+function bldParam(prefs) { return prefs.bld === '1' ? '' : '&bld=' + prefs.bld; }
 
 function terrainUrl(core, mapId, info, prefs) {
-  return `/tiles/${core}/adt/${mapId}/{z}/{x}/{y}.webp?v=${info.version}&shade=${prefs.shade}${prefs.buildings ? '' : '&bld=0'}`;
+  return `/tiles/${core}/adt/${mapId}/{z}/{x}/{y}.webp?v=${info.version}&shade=${prefs.shade}${bldParam(prefs)}`;
 }
 
 function terrainLayerFor(info, core, mapId, prefs, bounds, map) {
@@ -477,8 +481,8 @@ function fillTerrainChips(row, info, sync) {
   };
   row.append(chip('detailed ground', prefs.detailed, () => store('wdetail', prefs.detailed ? '0' : '1'),
     'draw the ground from the client terrain files instead of the minimap'));
-  row.append(chip('buildings + caves', prefs.buildings, () => store('wbld', prefs.buildings ? '0' : '1'),
-    'draw buildings and caves on the rendered ground; off shows the bare terrain'));
+  for (const [v, label, hint] of BUILDING_MODES)
+    row.append(chip(label, prefs.bld === v, () => store('wbld', v), hint));
   for (const name of TERRAIN_SHADES)
     row.append(chip(name, prefs.shade === name, () => store('wshade', name), 'ground shading preset'));
 }
