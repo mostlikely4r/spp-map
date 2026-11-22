@@ -9,7 +9,7 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from . import wmomodel
 from .clientdata import ClientArchives, dbc_string, read_dbc
@@ -22,7 +22,7 @@ REPEATS = 8
 TILE_PX = 256
 MIN_LEVEL = -1
 MAX_LEVEL = 1
-RENDER_VERSION = 3
+RENDER_VERSION = 4
 CHUNK_YD = ADT_YD / 16
 APRON_PX = ADT_PX + 128
 
@@ -30,8 +30,13 @@ ADT_PARSE_MB = 80
 RENDER_MB = 80
 TEXTURE_MB = 24
 WMO_MB = 40
-BUILD_MIN_AREA = 0.6
-BUILD_BIG_AREA = 6.0
+BUILD_FACING = 1.0
+BUILD_MIN_UP = 0.15
+BUILD_AMBIENT = 0.62
+BUILD_BATCH = 1500000
+BUILD_STEP = 1.5
+BUILD_EDGE = 0.6
+BUILD_TEX_PX = 32
 
 SHADING = {
     "soft": {"light": (-0.30, -0.40, 0.87), "amb": 0.60, "k": 0.45, "lo": 0.50, "hi": 1.10, "sh": 0.15},
@@ -334,11 +339,10 @@ def render_adt(adt, textures, preset, pad, buildings=None):
 def draw_buildings(renderer, placements, left, top):
     yard_px = CHUNK_YD / PPC
     size = ADT_PX
-    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    pen = ImageDraw.Draw(canvas)
-    large = []
-    dot_x, dot_y, dot_tone, dot_z = [], [], [], []
-    ink = {}
+    zbuf = np.full(size * size, -np.inf, np.float32)
+    rgb = np.zeros((size * size, 3), np.float32)
+    atlas, slots = [], {}
+    batches = []
     seen = set()
     for uid, name, position, rotation, scale in placements:
         mark = (name.lower(), uid)
@@ -360,86 +364,108 @@ def draw_buildings(renderer, placements, left, top):
             if group is None:
                 continue
             wx, wy, wz = wmomodel.transform(group["verts"], position, rotation, scale)
-            px = (left - wy) / yard_px
-            py = (top - wx) / yard_px
+            px = ((left - wy) / yard_px).astype(np.float32)
+            py = ((top - wx) / yard_px).astype(np.float32)
             tris = group["tris"]
-            verts = group["verts"]
-            x0, x1, x2 = px[tris[:, 0]], px[tris[:, 1]], px[tris[:, 2]]
-            y0, y1, y2 = py[tris[:, 0]], py[tris[:, 1]], py[tris[:, 2]]
-            area = np.abs((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)) * 0.5
-            normals = np.cross(verts[tris[:, 1]] - verts[tris[:, 0]], verts[tris[:, 2]] - verts[tris[:, 0]])
-            upness = np.abs(normals[:, 2]) / (np.linalg.norm(normals, axis=1) + 1e-6)
-            keep = (area > BUILD_MIN_AREA) & (upness > 0.2)
-            keep &= (np.maximum(np.maximum(x0, x1), x2) >= 0) & (np.minimum(np.minimum(x0, x1), x2) <= size)
-            keep &= (np.maximum(np.maximum(y0, y1), y2) >= 0) & (np.minimum(np.minimum(y0, y1), y2) <= size)
+            mats = group["mats"]
+            a, b, c = tris[:, 0], tris[:, 1], tris[:, 2]
+            e1 = np.stack([wx[b] - wx[a], wy[b] - wy[a], wz[b] - wz[a]], axis=1)
+            e2 = np.stack([wx[c] - wx[a], wy[c] - wy[a], wz[c] - wz[a]], axis=1)
+            normal = np.cross(e1, e2)
+            upness = normal[:, 2] * BUILD_FACING / (np.linalg.norm(normal, axis=1) + 1e-6)
+            keep = (mats != 255) & (upness > BUILD_MIN_UP)
+            keep &= (np.maximum(np.maximum(px[a], px[b]), px[c]) >= 0) & (np.minimum(np.minimum(px[a], px[b]), px[c]) <= size)
+            keep &= (np.maximum(np.maximum(py[a], py[b]), py[c]) >= 0) & (np.minimum(np.minimum(py[a], py[b]), py[c]) <= size)
             if not keep.any():
                 continue
-            chosen = np.nonzero(keep)[0]
-            mats = group["mats"]
+            sel = np.nonzero(keep)[0]
             uvs = group.get("uvs")
-            if uvs is not None:
-                tu = ((uvs[tris[chosen, 0]] + uvs[tris[chosen, 1]] + uvs[tris[chosen, 2]]) / 3.0) % 1.0
-                tiles = {m: renderer.wmo_texture(textures[m] if m < len(textures) else "")
-                         for m in set(mats[chosen].tolist())}
-                tones = np.empty((chosen.size, 3), np.float32)
-                for mat, tile in tiles.items():
-                    sel = np.nonzero(mats[chosen] == mat)[0]
-                    sx = np.clip((tu[sel, 0] * 32).astype(np.int32), 0, 31)
-                    sy = np.clip((tu[sel, 1] * 32).astype(np.int32), 0, 31)
-                    tones[sel] = tile[sy, sx]
-            else:
-                uniq, inverse = np.unique(mats[chosen], return_inverse=True)
-                bases = np.array([renderer.wmo_colour(textures[m] if m < len(textures) else "") for m in uniq],
-                                 np.float32)
-                tones = bases[inverse]
-            light = 0.58 + 0.42 * upness[chosen]
-            tones = tones * light[:, None]
-            zc = (wz[tris[chosen, 0]] + wz[tris[chosen, 1]] + wz[tris[chosen, 2]]) / 3.0
-            big = area[chosen] > BUILD_BIG_AREA
-            for slot in np.nonzero(big)[0]:
-                n = chosen[slot]
-                a, b, c = int(tris[n, 0]), int(tris[n, 1]), int(tris[n, 2])
-                key = (int(mats[n]), int(light[slot] * 12))
-                tone = ink.get(key)
-                if tone is None:
-                    tone = tuple(int(min(255, max(0, v * 255))) for v in tones[slot]) + (255,)
-                    ink[key] = tone
-                large.append((float(zc[slot]), (px[a], py[a]), (px[b], py[b]), (px[c], py[c]), tone))
-            small = ~big
-            if small.any():
-                pick = chosen[small]
-                dot_x.append((px[tris[pick, 0]] + px[tris[pick, 1]] + px[tris[pick, 2]]) / 3.0)
-                dot_y.append((py[tris[pick, 0]] + py[tris[pick, 1]] + py[tris[pick, 2]]) / 3.0)
-                dot_tone.append((tones[small] * 255.0).astype(np.uint8))
-                dot_z.append(zc[small])
-    if dot_x:
-        ix = np.clip(np.concatenate(dot_x).astype(np.int32), 0, size - 1)
-        iy = np.clip(np.concatenate(dot_y).astype(np.int32), 0, size - 1)
-        tones = np.concatenate(dot_tone)
-        order = np.argsort(np.concatenate(dot_z), kind="stable")
-        layer = np.zeros((size, size, 4), np.uint8)
-        layer[iy[order], ix[order], :3] = tones[order]
-        layer[iy[order], ix[order], 3] = 255
-        filled = layer.copy()
-        for shift_y in (-1, 0, 1):
-            for shift_x in (-1, 0, 1):
-                if shift_x or shift_y:
-                    filled[1:-1, 1:-1] = np.where(filled[1:-1, 1:-1, 3:4] == 0, layer[1 + shift_y:size - 1 + shift_y,
-                                                                                 1 + shift_x:size - 1 + shift_x], filled[1:-1, 1:-1])
-        canvas.paste(Image.fromarray(filled, "RGBA"), (0, 0))
-        pen = ImageDraw.Draw(canvas)
-    large.sort(key=lambda item: item[0])
-    for _, p0, p1, p2, tone in large:
-        pen.polygon([p0, p1, p2], fill=tone)
-    data = np.asarray(canvas, np.float32) / 255.0
-    covered = data[:, :, 3] > 0.5
+            if uvs is None:
+                uvs = np.zeros((len(group["verts"]), 2), np.float32)
+            tex = np.empty(sel.size, np.int32)
+            for mat in set(mats[sel].tolist()):
+                name_t = textures[mat] if mat < len(textures) else ""
+                slot = slots.get(name_t)
+                if slot is None:
+                    slot = slots[name_t] = len(atlas)
+                    atlas.append(renderer.wmo_texture(name_t))
+                tex[mats[sel] == mat] = slot
+            t = tris[sel]
+            batches.append((px[t], py[t], wz[t].astype(np.float32), uvs[t], tex,
+                            (BUILD_AMBIENT + (1.0 - BUILD_AMBIENT) * upness[sel]).astype(np.float32)))
+    if not batches:
+        return np.zeros((size, size, 3), np.float32), np.zeros((size, size), bool)
+    tex_atlas = np.stack(atlas)
+    tsize = tex_atlas.shape[1]
+    X = np.concatenate([bt[0] for bt in batches])
+    Y = np.concatenate([bt[1] for bt in batches])
+    Z = np.concatenate([bt[2] for bt in batches])
+    UV = np.concatenate([bt[3] for bt in batches])
+    TEX = np.concatenate([bt[4] for bt in batches])
+    LIGHT = np.concatenate([bt[5] for bt in batches])
+    x0 = np.clip(np.floor(X.min(axis=1)), 0, size - 1).astype(np.int64)
+    x1 = np.clip(np.ceil(X.max(axis=1)), 0, size - 1).astype(np.int64)
+    y0 = np.clip(np.floor(Y.min(axis=1)), 0, size - 1).astype(np.int64)
+    y1 = np.clip(np.ceil(Y.max(axis=1)), 0, size - 1).astype(np.int64)
+    w = x1 - x0 + 1
+    h = y1 - y0 + 1
+    counts = w * h
+    denom = (Y[:, 1] - Y[:, 2]) * (X[:, 0] - X[:, 2]) + (X[:, 2] - X[:, 1]) * (Y[:, 0] - Y[:, 2])
+    valid = np.abs(denom) > 1e-4
+    order = np.nonzero(valid)[0]
+    start = 0
+    while start < order.size:
+        total = 0
+        end = start
+        while end < order.size and (total == 0 or total + counts[order[end]] <= BUILD_BATCH):
+            total += counts[order[end]]
+            end += 1
+        ids = order[start:end]
+        start = end
+        n = counts[ids]
+        tri = np.repeat(ids, n)
+        local = np.arange(n.sum(), dtype=np.int64) - np.repeat(np.cumsum(n) - n, n)
+        cx = x0[tri] + local % w[tri]
+        cy = y0[tri] + local // w[tri]
+        fx = cx.astype(np.float32) + 0.5
+        fy = cy.astype(np.float32) + 0.5
+        d = denom[tri]
+        l0 = ((Y[tri, 1] - Y[tri, 2]) * (fx - X[tri, 2]) + (X[tri, 2] - X[tri, 1]) * (fy - Y[tri, 2])) / d
+        l1 = ((Y[tri, 2] - Y[tri, 0]) * (fx - X[tri, 2]) + (X[tri, 0] - X[tri, 2]) * (fy - Y[tri, 2])) / d
+        l2 = 1.0 - l0 - l1
+        inside = (l0 >= -1e-3) & (l1 >= -1e-3) & (l2 >= -1e-3)
+        if not inside.any():
+            continue
+        tri, cx, cy, l0, l1, l2 = tri[inside], cx[inside], cy[inside], l0[inside], l1[inside], l2[inside]
+        z = l0 * Z[tri, 0] + l1 * Z[tri, 1] + l2 * Z[tri, 2]
+        pix = cy * size + cx
+        rank = np.lexsort((z, pix))
+        pix, z, tri, l0, l1, l2 = pix[rank], z[rank], tri[rank], l0[rank], l1[rank], l2[rank]
+        last = np.ones(pix.size, bool)
+        last[:-1] = pix[1:] != pix[:-1]
+        win = last & (z > zbuf[pix])
+        if not win.any():
+            continue
+        pix, z, tri, l0, l1, l2 = pix[win], z[win], tri[win], l0[win], l1[win], l2[win]
+        u = l0 * UV[tri, 0, 0] + l1 * UV[tri, 1, 0] + l2 * UV[tri, 2, 0]
+        v = l0 * UV[tri, 0, 1] + l1 * UV[tri, 1, 1] + l2 * UV[tri, 2, 1]
+        su = (np.mod(u, 1.0) * tsize).astype(np.int32) % tsize
+        sv = (np.mod(v, 1.0) * tsize).astype(np.int32) % tsize
+        zbuf[pix] = z
+        rgb[pix] = tex_atlas[TEX[tri], sv, su] * LIGHT[tri, None]
+    covered = np.isfinite(zbuf).reshape(size, size)
+    data = rgb.reshape(size, size, 3)
+    height = np.where(covered, zbuf.reshape(size, size), -1e9)
     edge = np.zeros_like(covered)
     inner = covered[1:-1, 1:-1]
+    hc = height[1:-1, 1:-1]
     for dy in (-1, 0, 1):
         for dx in (-1, 0, 1):
-            edge[1:-1, 1:-1] |= inner & ~covered[1 + dy:size - 1 + dy, 1 + dx:size - 1 + dx]
-    data[edge, :3] *= 0.55
-    return data[:, :, :3], covered
+            if dx or dy:
+                nb = height[1 + dy:size - 1 + dy, 1 + dx:size - 1 + dx]
+                edge[1:-1, 1:-1] |= inner & (nb < hc - BUILD_STEP)
+    data[edge] *= BUILD_EDGE
+    return data, covered
 
 
 def relief_field(pad):
@@ -542,9 +568,9 @@ class Renderer:
             return hit
         image = self.archives.image(texture) if texture else None
         if image is None:
-            tile = np.full((32, 32, 3), 0.62, np.float32)
+            tile = np.full((BUILD_TEX_PX, BUILD_TEX_PX, 3), 0.62, np.float32)
         else:
-            tile = np.asarray(image.convert("RGB").resize((32, 32), Image.BILINEAR), np.float32) / 255.0
+            tile = np.asarray(image.convert("RGB").resize((BUILD_TEX_PX, BUILD_TEX_PX), Image.BOX), np.float32) / 255.0
         self.wmo_pixels.put(key, tile)
         return tile
 
