@@ -18,6 +18,8 @@ from . import overlay
 from .layers import StaticLayers
 from .live import DbFeed, LiveFeed, recent_events
 from .mapstore import MapStore
+from .transports import TransportFeed
+from .transportart import TransportArt
 from .worlddb import WorldDb
 
 MARGIN = 0.35
@@ -37,8 +39,22 @@ class CoreContext:
         self._live = None
         self._db_live = None
         self._layers = None
+        self._transports = None
+        self._transport_art = None
         self.world = WorldDb(core)
         self.probe = Probe(app, self)
+
+    @property
+    def transports(self):
+        if self._transports is None:
+            self._transports = TransportFeed(self.core, self.world)
+        return self._transports
+
+    @property
+    def transport_art(self):
+        if self._transport_art is None:
+            self._transport_art = TransportArt(self.app, self.core, self.world)
+        return self._transport_art
 
     @property
     def layers(self):
@@ -142,6 +158,10 @@ class App:
             values = botconf.read_values(path) or {}
             if (values.get("AiPlayerbot.LiveMapSampleSec") or {}).get("value") is None:
                 botconf.write_value(path, "AiPlayerbot.LiveMapSampleSec", "5")
+        if group == "transport":
+            values = botconf.read_values(path) or {}
+            if (values.get("AiPlayerbot.TransportTrace") or {}).get("value") in (None, "0"):
+                botconf.write_value(path, "AiPlayerbot.TransportTrace", "1")
         return {"added": added, "report": ctx.probe.report(True)}
 
     def capabilities(self, core=None, refresh=False):
@@ -315,9 +335,10 @@ class App:
             out[item["id"]] = (off[0] - base[0], off[1] - base[1], angle)
         return out
 
-    def scene_layer(self, core, kind, mode, honest, bounds, kinds=None, focus=None, dungeons=True, turn=False):
+    def scene_layer(self, core, kind, mode, honest, bounds, kinds=None, focus=None, dungeons=True, turn=False, groups=None):
         ctx = self.cores[core]
         out = {"scene": True, "maps": [], "features": [], "bins": [], "links": [], "nodes": [], "total": 0, "binned": False}
+        seen = set()
         for map_id, off in sorted(self.scene_offsets(core, mode, honest, focus, dungeons, turn).items()):
             b = local_bounds(bounds, off)
             if b["bottom"] > b["top"] or b["right"] > b["left"]:
@@ -327,7 +348,7 @@ class App:
             elif kind == "nodes":
                 close = max(bounds["top"] - bounds["bottom"], bounds["left"] - bounds["right"]) <= SCENE_PATH_SPAN
                 data = ctx.world.travel_nodes(map_id, b, limit=SCENE_NODES if focus is None else FOCUS_NODES,
-                                              paths=close)
+                                              paths=close, groups=groups)
             else:
                 data = ctx.layers.telecache.layer(map_id, b, kinds, limit=SCENE_LIMIT)
             out["maps"].append(map_id)
@@ -338,6 +359,12 @@ class App:
                     out[key].append([map_id] + list(row))
             for key in ("links", "nodes"):
                 for row in data.get(key) or ():
+                    if key == "links":
+                        lk = row.get("key")
+                        if lk:
+                            if lk in seen:
+                                continue
+                            seen.add(lk)
                     out[key].append(dict(row, map=map_id))
         return out
 

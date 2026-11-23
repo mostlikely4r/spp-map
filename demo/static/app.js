@@ -13,6 +13,7 @@ const LM = (() => {
 })();
 
 function asset(p) {
+  p = String(p).replace(/ /g, '%20');
   if (LM.mode === 'static') return LM.base + p.split('?')[0];
   if (LM.mode === 'remote') return LM.remote + p + (p.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(LM.token);
   return p;
@@ -367,7 +368,7 @@ function fixSteps(core, cap, canWrite) {
     f.setting ? el('div', { class: 'meta' }, el('a', { href: '#settings' }, 'change it below under Settings')) : null)));
 }
 
-const EXPORT_LABELS = { live: 'live positions + test runs', travel: 'travel layers', events: 'deaths, quests and level-ups', zones: 'zone levels' };
+const EXPORT_LABELS = { live: 'live positions + test runs', travel: 'travel layers', transport: 'live transports', events: 'deaths, quests and level-ups', zones: 'zone levels' };
 let helpTimer = null;
 
 function post(path, body) {
@@ -665,7 +666,7 @@ async function testPage(core, test) {
 
 const ROLE = { giver: 'var(--giver)', taker: 'var(--taker)', objective: 'var(--objective)' };
 const ROLE_HEX = { giver: '#ffd200', taker: '#3cdc5a', objective: '#ff46c8' };
-const LINK_COLORS = { 1: '#28c8ff', 2: '#ff9600', 3: '#c800ff', 4: '#ffff00', 5: '#ff5050', 6: '#ffffff' };
+const LINK_COLORS = { 1: '#28c8ff', 2: '#ffd200', 3: '#c800ff', 4: '#ff9600', 5: '#ffd200', 6: '#ffd200' };
 const ll = (x, y) => [x, -y];
 
 async function runPage(id) {
@@ -781,7 +782,13 @@ function drawRunMap(div, toggles, d) {
     if (!b) return;
     const q = new URLSearchParams({ core: d.run.core, map: d.map.id, left: b.left, right: b.right, top: b.top, bottom: b.bottom });
     const n = await api('nodes?' + q.toString());
-    for (const link of n.links) L.polyline(link.points.map(p => ll(p[0], p[1])), { color: LINK_COLORS[link.type] || '#fff', weight: link.type === 1 ? 2 : 1, opacity: 0.8 }).addTo(nodes);
+    for (const link of n.links) {
+      const segs = link.segs || [{ map: d.map.id, points: link.points || [] }];
+      for (const seg of segs) {
+        if (seg.map !== d.map.id) continue;
+        L.polyline(seg.points.map(p => ll(p[0], p[1])), { color: LINK_COLORS[link.type] || '#fff', weight: link.type === 1 ? 2 : 1, opacity: 0.8 }).addTo(nodes);
+      }
+    }
     for (const node of n.nodes) L.circleMarker(ll(node.x, node.y), { radius: 3, color: '#000', weight: 1, fillColor: '#fff', fillOpacity: 1 }).bindTooltip(node.name).addTo(nodes);
   });
 }

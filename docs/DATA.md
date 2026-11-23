@@ -4,7 +4,8 @@
 | Feature | Needs |
 | --- | --- |
 | Test explorer | `bot_test_results*.log` in `Settings/<core>/logs` (the test framework writes these) |
-| Quest markers, travel nodes | world database (read from `mangosd.conf`) |
+| Quest markers, travel nodes | world database (read from `mangosd.conf`); the walk, flight, transport and portal path detail comes from the same `ai_playerbot_travelnode_path` table |
+| Live transports (boats, zeppelins, trams) | `transport.csv` in `AiPlayerbot.AllowedLogFiles`: every spawned transport on every loaded map, every bot-manager tick (name, entry, position, orientation, map, guid, passengers). The map falls back to `bot_transport.csv` (bot rides only, `AiPlayerbot.TransportTrace = 1`) on older builds. Zoomed-in model art comes from the game client's own WMO/M2 files and is cached under `data/models/transports` |
 | Live world map | `bot_positions.csv` (below); race/class from the characters database (read from `mangosd.conf`) |
 | Exact bot track on the run page | `bot_positions.csv` (every bot, every 5 s, map + world position + floor) and `bot_test_runs.csv` (exact test start/end, last actions, travel target) in `AiPlayerbot.AllowedLogFiles`. Needs a PlayerBots build with the livemap data contract (manifest `contract: 1`) |
 | Older / fallback tracks | `bot_heartbeat.csv`, `bot_states.csv`, `bot_events.csv` (old builds: display coordinates only, map guessed) |
@@ -26,7 +27,7 @@ Blizzard art.
 | L1 | + world / characters database (from `mangosd.conf`) | online players, NPC / object / quest layers |
 | L2 | + PlayerBots (bots in the characters DB) | bots on the map, positions as of their last save |
 | L3 | + bot log exports in `AiPlayerbot.AllowedLogFiles` | travel intent, teleport cache, zone levels, deaths / quests / level-ups |
-| L4 | + live-map data contract (`livemap_manifest.json`, `bot_positions.csv`) | the real live map: 5 s positions, trails, follow, bot state |
+| L4 | + live-map data contract (`livemap_manifest.json`, `bot_positions.csv`) | the real live map: 5 s positions, trails, follow, bot state; with `AiPlayerbot.TransportTrace = 1` also the live boats, zeppelins and trams (`bot_transport.csv`) |
 | L5 | + test results (`GenerateBotTests` builds) | test explorer, tests on the map, run pages |
 
 The characters-DB feed polls `characters where online = 1` every `db_poll_s` seconds (default 20) and

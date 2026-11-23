@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlparse
 
 from . import botconf, snapshot
+from .worlddb import TRAVEL_GROUPS
 
 
 class Server(ThreadingHTTPServer):
@@ -19,6 +20,12 @@ STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 PAGE_ROUTES = re.compile(r"^/($|r/\d+$|t/[^/]+/.+$|flips$|clusters$|test$|tests$|help$|settings$|w$|w/.*$)")
 COOKIE = "lm_token"
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
+
+
+def travel_groups(q):
+    if "groups" not in q:
+        return None
+    return [g for g in q["groups"].split(",") if g in TRAVEL_GROUPS]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -219,7 +226,27 @@ class Handler(BaseHTTPRequestHandler):
         if method == "GET" and name == "nodes":
             ctx = app.cores[q["core"]]
             bounds = {k: float(q[k]) for k in ("left", "right", "top", "bottom")}
-            return self.send_json(ctx.world.travel_nodes(int(q["map"]), bounds))
+            return self.send_json(ctx.world.travel_nodes(int(q["map"]), bounds, groups=travel_groups(q)))
+        if method == "GET" and name == "live/transports":
+            if q["core"] not in app.cores:
+                return self.send_json({"error": "unknown core"}, 404)
+            ctx = app.cores[q["core"]]
+            map_id = int(q["map"]) if q.get("map", "") not in ("", "world") else None
+            data = ctx.transports.snapshot(map_id, min(int(q.get("seconds", 1800)), 86400))
+            for row in data["transports"]:
+                art = ctx.transport_art.describe(row["entry"])
+                if art:
+                    row["art"] = dict(art, url="/api/transport/art?core=" + quote(ctx.core.name)
+                                       + "&entry=" + str(row["entry"])
+                                       + "&v=" + str(art.get("built", "")).replace(" ", "-").replace(":", ""))
+            return self.send_json(data)
+        if method == "GET" and name == "transport/art":
+            ctx = app.cores.get(q.get("core", ""))
+            entry = q.get("entry", "")
+            if not ctx or not entry.isdigit():
+                return self.send_text(404, "no art")
+            ctx.transport_art.describe(int(entry))
+            return self.send_file(ctx.transport_art.path(int(entry)), cache=604800)
         if method == "GET" and name == "live":
             core = q.get("core") or app.live_core()
             if core not in app.cores:
@@ -261,9 +288,9 @@ class Handler(BaseHTTPRequestHandler):
                 focus = int(q["focus"]) if q.get("focus", "").lstrip("-").isdigit() else None
                 return self.send_json(app.scene_layer(q["core"], q["kind"], mode, honest, bounds, kinds,
                                                       focus=focus, dungeons=q.get("dungeons") != "0",
-                                                      turn=q.get("turn") == "1"))
+                                                      turn=q.get("turn") == "1", groups=travel_groups(q)))
             if q["kind"] == "nodes":
-                return self.send_json(ctx.world.travel_nodes(int(q["map"]), bounds))
+                return self.send_json(ctx.world.travel_nodes(int(q["map"]), bounds, groups=travel_groups(q)))
             if q["kind"] == "zonelevels":
                 return self.send_json(ctx.layers.zones.for_map(int(q["map"])))
             if q["kind"] == "telecache":

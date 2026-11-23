@@ -17,7 +17,7 @@ LEVEL_TEXT = {
     "L1": "online players, NPCs and objects from your database",
     "L2": "bots on the map (from the characters database)",
     "L3": "bot travel, zone levels, teleport cache and events from the bot log exports",
-    "L4": "the real live map: positions every few seconds, trails, follow",
+    "L4": "the real live map: positions every few seconds, trails, follow, live boats, zeppelins and trams",
     "L5": "the bot test explorer: test list, tests on the map, run pages",
 }
 
@@ -25,6 +25,7 @@ EXPORT_GROUPS = {
     "live": {"label": "live positions + test runs", "files": ["livemap_manifest.json", "bot_positions.csv", "bot_test_runs.csv"],
              "note": "about 1 GB a day at 3000 bots; turn on log archiving to keep old boots in check"},
     "travel": {"label": "travel layers", "files": ["travel_map.csv", "telecache.csv", "map_offsets.csv"]},
+    "transport": {"label": "live transports", "files": ["transport.csv", "bot_transport.csv"]},
     "events": {"label": "deaths, quests and level-ups", "files": ["bot_events.csv"]},
     "zones": {"label": "zone levels", "files": ["zones.csv"]},
 }
@@ -44,6 +45,11 @@ LAYERS = {
     "npcs": ("NPCs", ["world_db"]),
     "objects": ("Game objects", ["world_db"]),
     "nodes": ("Travel network", ["travel_db"]),
+    "walkpaths": ("Walk paths", ["travel_db"]),
+    "flightpaths": ("Flight paths", ["travel_db"]),
+    "transportpaths": ("Transport paths (tram, boats, zeppelins)", ["travel_db"]),
+    "portalpaths": ("Portal and teleport paths", ["travel_db"]),
+    "transports": ("Live transports", ["exp_transports"]),
     "tests": ("Tests run here", ["tests"]),
 }
 
@@ -162,7 +168,7 @@ class Probe:
             try:
                 found = fn(caps)
             except Exception as exc:
-                ids = ["exp_travel", "exp_telecache", "exp_events", "exp_zones"] if name == "exports" else \
+                ids = ["exp_travel", "exp_telecache", "exp_events", "exp_zones", "exp_transport", "exp_transports"] if name == "exports" else \
                     (["world_db", "travel_db"] if name == "world_db" else [name])
                 found = [Capability(i, i, "L0", "error", "", f"probe failed: {exc}") for i in ids]
             for cap in found:
@@ -383,12 +389,61 @@ class Probe:
         return cap
 
     def p_exports(self, caps):
-        return [
+        out = [
             self.export_cap("exp_travel", "Travel intent export", "L3", "travel_map.csv", "travel"),
             self.export_cap("exp_telecache", "Teleport cache export", "L3", "telecache.csv", "travel"),
             self.export_cap("exp_events", "Bot events export", "L3", "bot_events.csv", "events"),
             self.export_cap("exp_zones", "Zone levels export", "L3", "zones.csv", "zones"),
         ]
+        transport = self.export_cap("exp_transport", "Transport ride trace export", "L4", "bot_transport.csv", "transport")
+        if transport.status != "ok":
+            transport.fix.insert(0, step("Set AiPlayerbot.TransportTrace = 1 in aiplayerbot.conf so the server writes bot_transport.csv.",
+                                         setting="AiPlayerbot.TransportTrace"))
+        out.append(transport)
+        out.append(self.p_transports())
+        return out
+
+    def p_transports(self):
+        cap = Capability("exp_transports", "Transport positions export", "L4")
+        path = os.path.join(self.core.logs, "transport.csv") if self.core.logs else ""
+        age = file_age(path) if path else None
+        if age is not None and self.snapshot_format(path):
+            cap.status = "ok"
+            cap.source = "transport.csv"
+            cap.detail = f"every spawned transport, {age_text(age)}"
+            return cap
+        trace = os.path.join(self.core.logs, "bot_transport.csv") if self.core.logs else ""
+        trace_age = file_age(trace) if trace else None
+        if trace_age is not None:
+            cap.status = "degraded"
+            cap.source = "bot_transport.csv"
+            cap.detail = "only the bot ride trace: transports no bot used are missing"
+        elif age is not None:
+            cap.detail = "transport.csv has the old format (no map/guid); needs a newer PlayerBots build"
+        else:
+            cap.detail = "transport.csv is not written yet"
+        bot_conf = self.core.bot_conf if self.core.bot_conf and os.path.isfile(self.core.bot_conf) else ""
+        if bot_conf and self.listed is not None and "transport.csv" not in self.listed:
+            wanted = self.listed + ["transport.csv"]
+            cap.fix = [step("Add transport.csv to AiPlayerbot.AllowedLogFiles, then restart the world server.",
+                            snippet="AiPlayerbot.AllowedLogFiles = " + ",".join(wanted), file=bot_conf,
+                            action={"enable": "transport"})]
+        else:
+            cap.fix = [step("Needs a PlayerBots build from 2026-11 or later (transport.csv with mapId/guid/passengers)."),
+                       step("Restart the world server after adding transport.csv to AiPlayerbot.AllowedLogFiles.")]
+        return cap
+
+    @staticmethod
+    def snapshot_format(path):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                first = fh.readline().strip()
+                second = fh.readline().strip()
+        except OSError:
+            return False
+        if first.startswith("ts,name,entry,point,o,mapId,guid,passengers"):
+            return True
+        return bool(second) and len(second.split(",")) >= 8 and "POINT(" in second
 
     def p_contract(self, caps):
         cap = Capability("contract", "Live map data contract", "L4")

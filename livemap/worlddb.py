@@ -8,6 +8,9 @@ VANILLA_NPC_FLAGS = ((0x8, "flightmaster"), (0x80, "innkeeper"), (0x1000, "aucti
 LATER_NPC_FLAGS = ((0x2000, "flightmaster"), (0x10000, "innkeeper"), (0x200000, "auctioneer"), (0x20000, "banker"),
                    (0x100000, "battlemaster"), (0x4000, "spirithealer"), (0x10, "trainer"), (0x80, "vendor"),
                    (0x1000, "vendor"), (0x2, "questgiver"))
+TRAVEL_GROUPS = {"walk": (1,), "portal": (2, 5, 6), "transport": (3,), "flight": (4,)}
+TRAVEL_GROUP_OF = {t: g for g, types in TRAVEL_GROUPS.items() for t in types}
+
 GO_TYPES = {0: "door", 1: "button", 2: "questgiver", 3: "chest", 5: "generic", 6: "trap", 7: "chair", 8: "spellfocus",
             9: "text", 10: "goober", 11: "transport", 13: "camera", 15: "transport", 17: "fishing", 18: "ritual",
             19: "mailbox", 22: "spellcaster", 23: "meetingstone", 24: "flagstand", 25: "fishinghole",
@@ -259,7 +262,23 @@ class WorldDb:
                 "bottom": float(r[0]) - 60, "top": float(r[1]) + 60, "right": float(r[2]) - 60, "left": float(r[3]) + 60}
         return self.cache[key]
 
-    def travel_nodes(self, map_id, bounds, limit=4000, paths=True):
+    def travel_paths(self, node_ids, types):
+        if not node_ids or not types:
+            return {}
+        marks = ",".join(["%s"] * len(node_ids))
+        tmarks = ",".join(["%s"] * len(types))
+        rows = self.rows(
+            f"select p.node_id, p.to_node_id, p.map_id, p.x, p.y from ai_playerbot_travelnode_path p"
+            f" join ai_playerbot_travelnode_link l on l.node_id=p.node_id and l.to_node_id=p.to_node_id"
+            f" where p.node_id in ({marks}) and l.type in ({tmarks}) order by p.node_id, p.to_node_id, p.nr",
+            list(node_ids) + list(types))
+        out = {}
+        for a, b, m, x, y in rows:
+            out.setdefault((a, b), []).append((int(m), float(x), float(y)))
+        return out
+
+    def travel_nodes(self, map_id, bounds, limit=4000, paths=True, groups=None):
+        wanted = {t for g in (TRAVEL_GROUPS if groups is None else groups) for t in TRAVEL_GROUPS.get(g, ())}
         args = (map_id, bounds["bottom"], bounds["top"], bounds["right"], bounds["left"])
         nodes = {
             nid: {"id": nid, "name": name, "x": float(x), "y": float(y), "z": float(z)}
@@ -267,43 +286,48 @@ class WorldDb:
                 "select id, name, x, y, z from ai_playerbot_travelnode where map_id=%s"
                 " and x between %s and %s and y between %s and %s limit %s", args + (limit,))
         }
-        if not nodes:
-            return {"nodes": [], "links": []}
+        if not nodes or not wanted:
+            return {"nodes": list(nodes.values()), "links": []}
         ids = list(nodes)
         marks = ",".join(["%s"] * len(ids))
         rows = self.rows(
-            f"select node_id, to_node_id, type, max_creature_0, max_creature_1, max_creature_2"
+            f"select node_id, to_node_id, type, object, max_creature_0, max_creature_1, max_creature_2"
             f" from ai_playerbot_travelnode_link where node_id in ({marks})", ids)
-        links = [(a, b, t) for a, b, t, *_ in rows]
-        danger = {(a, b): [int(m0), int(m1), int(m2)] for a, b, t, m0, m1, m2 in rows}
+        links = [(a, b, t, o) for a, b, t, o, *_ in rows if t in wanted]
+        danger = {(a, b): [int(m0), int(m1), int(m2)] for a, b, t, o, m0, m1, m2 in rows}
         far = {}
-        missing = sorted({b for a, b, t in links if b not in nodes})
+        missing = sorted({b for a, b, t, o in links if b not in nodes})
         if missing:
             fmarks = ",".join(["%s"] * len(missing))
-            far = {nid: {"x": float(x), "y": float(y)} for nid, x, y in self.rows(
-                f"select id, x, y from ai_playerbot_travelnode where map_id=%s and id in ({fmarks})", [map_id] + missing)}
+            far = {nid: {"name": name, "x": float(x), "y": float(y), "map": int(m)} for nid, name, x, y, m in self.rows(
+                f"select id, name, x, y, map_id from ai_playerbot_travelnode where id in ({fmarks})", missing)}
         ends = {**far, **nodes}
-        walk = {(a, b) for a, b, t in links if t == 1 and a in nodes and b in ends}
-        walk |= {(b, a) for a, b in walk}
-        walked = {}
-        if walk and paths:
-            for a, b, x, y in self.rows(
-                    f"select node_id, to_node_id, x, y from ai_playerbot_travelnode_path where map_id=%s"
-                    f" and (node_id in ({marks}) or to_node_id in ({marks})) order by node_id, to_node_id, nr",
-                    [map_id] + ids + ids):
-                if (a, b) in walk:
-                    walked.setdefault((a, b), []).append([float(x), float(y)])
+        path_types = {t for t in wanted if t != 1 or paths}
+        walked = self.travel_paths(list(set(ids) | set(missing)), sorted(path_types)) if path_types else {}
         out_links = []
         seen = set()
-        for a, b, t in links:
+        for a, b, t, obj in links:
             if b not in ends:
                 continue
             pair = (min(a, b), max(a, b), t)
             if pair in seen:
                 continue
+            points = walked.get((a, b)) or walked.get((b, a))
+            if not points and ends[b].get("map", map_id) != map_id:
+                continue
             seen.add(pair)
-            pts = walked.get((a, b)) or walked.get((b, a))
-            if not pts:
-                pts = [[nodes[a]["x"], nodes[a]["y"]], [ends[b]["x"], ends[b]["y"]]]
-            out_links.append({"type": t, "points": pts, "danger": danger.get((a, b)) or danger.get((b, a)) or [0, 0, 0]})
+            segs = []
+            for m, x, y in points or ():
+                if not segs or segs[-1]["map"] != m:
+                    segs.append({"map": m, "points": []})
+                segs[-1]["points"].append([round(x, 1), round(y, 1)])
+            if not segs:
+                segs = [{"map": map_id, "points": [[nodes[a]["x"], nodes[a]["y"]], [ends[b]["x"], ends[b]["y"]]]}]
+            link = {"key": f"{min(a, b)}-{max(a, b)}-{t}", "type": t, "group": TRAVEL_GROUP_OF.get(t, "walk"),
+                    "segs": segs,
+                    "from": nodes[a]["name"], "to": ends[b]["name"],
+                    "danger": danger.get((a, b)) or danger.get((b, a)) or [0, 0, 0]}
+            if obj:
+                link["object"] = int(obj)
+            out_links.append(link)
         return {"nodes": list(nodes.values()), "links": out_links}

@@ -28,7 +28,7 @@ line for anything that is missing.
 | L1 | + your server's database | online players, NPCs, objects and quest givers on the map |
 | L2 | + PlayerBots | bots on the map (positions as of their last save) |
 | L3 | + the bot log exports (one click on the Help page) | travel intent, teleport cache, zone levels, recent deaths / quests / level-ups |
-| L4 | + a PlayerBots build with the live-map exports | the real live map: positions every 5 s, trails, follow a bot, bot state |
+| L4 | + a PlayerBots build with the live-map exports | the real live map: positions every 5 s, trails, follow a bot, bot state, live boats / zeppelins / trams drawn as their own client models |
 | L5 | + bot test results (bot developers) | test explorer, tests on the map, run pages |
 
 | | |

@@ -102,6 +102,10 @@ async function demoApi(path, opts) {
       return rows.filter(e => (mapId === null || e.map === mapId) && (!kinds || kinds.has(e.kind)));
     }
     case 'live/intents': return (await demoFile('intents.json')).filter(r => mapId === null || r.map === mapId);
+    case 'live/transports': {
+      const d = await demoFile('transports.json').catch(() => ({ transports: [] }));
+      return { ...d, transports: (d.transports || []).filter(t => mapId === null || t.map === mapId) };
+    }
     case 'tests/where': return (await demoFile('tests_where.json')).filter(r => mapId === null || r.map === mapId);
     case 'overlay': return demoFile('overlay.json');
     case 'mapinfo': return demoFile(`mapinfo_${q.map}.json`).catch(() => ({ id: +q.map, name: 'map ' + q.map, basemaps: [], zones: [],

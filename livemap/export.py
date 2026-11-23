@@ -209,6 +209,13 @@ class Exporter:
             self.write("events.json", [])
             self.log(f"  events: {exc}")
         try:
+            tr = self.api("live/transports", core=self.core, map="world")
+            tr["transports"] = [t for t in tr.get("transports") or [] if t.get("map") in self.maps]
+            self.write("transports.json", tr)
+        except Exception as exc:
+            self.write("transports.json", {"transports": []})
+            self.log(f"  transports: {exc}")
+        try:
             it = self.api("live/intents", core=self.core, map="world", seconds=900)
             self.write("intents.json", [r for r in it if r.get("map") in self.maps or r.get("from_map") in self.maps])
         except Exception as exc:

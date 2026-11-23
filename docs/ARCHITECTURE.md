@@ -20,7 +20,18 @@ What works today:
   (`telecache.csv`, coloured by level, binned when zoomed out), **zone levels** (subzone outlines
   from `zones.csv`, coloured and labelled by level). NPCs can be coloured by role, level or reaction
   (friendly to Alliance / Horde / both / hostile, from `FactionTemplate.dbc`); travel paths by type or
-  by danger for Alliance or Horde (toughest creature level the bots recorded along the path). Dungeons with painted floor maps (WotLK) get floor buttons; every other
+  by danger for Alliance or Horde (toughest creature level the bots recorded along the path). Turning
+  **travel nodes** on draws the nodes only; four buttons appear under it for the paths the bots take
+  between them — **travel paths** (walked, with real path points when zoomed in), **flight paths**,
+  **transport paths** (trams, elevators, boats and zeppelins) and **portal paths** (area triggers,
+  teleport spells, static portals), all with their full stored waypoints, so a boat or zeppelin route
+  crosses the water instead of cutting across it. **Live transports** draws the boats, zeppelins and
+  trams themselves, every spawned one on every loaded map, from `transport.csv` (with its real map,
+  guid, orientation and passenger count; the bot ride trace `bot_transport.csv` is the fallback on
+  older builds). Zoomed in, each one is drawn as its own client model, rendered top-down from the
+  game's own WMO/M2 files, textured and shaded, scaled to its real size and turned by the orientation
+  the server reports. Older sightings (up to 30 minutes) stay on the map faded, at the position last
+  written, so a boat seen a few minutes ago is still visible without pretending to be live. Dungeons with painted floor maps (WotLK) get floor buttons; every other
   dungeon, raid and battleground shows its indoor minimap art (see below).
 
 - **Test explorer.** Every `[BOTTEST]` result from every boot and every core goes into one small
@@ -66,7 +77,8 @@ What works today:
   with it, and the server rotates the art (`?turn=<deg>`, cached under `data/turned`).
   **Plain art** drops the dark backdrop and the coloured outline. Zoomed out, each instance collapses
   to a pin with the number of bots inside. Every layer works here too, merged over the visible maps:
-  NPCs, game objects, travel nodes and their walking paths, travel intent, teleport cache, zone
+  NPCs, game objects, travel nodes with their walk, flight, transport and portal paths, live
+  transports, travel intent, teleport cache, zone
   levels, deaths / quests / level-ups. Instances the game data cannot place (no entrance trigger) are
   anchored by hand (`livemap/overlay.py`, `ANCHORS`): Ebon Hold over the Scarlet Enclave, the old
   Alliance PVP Barracks at Stormwind, both without door markers.
@@ -208,7 +220,9 @@ livemap/
   adtrender.py  zoomed-in ground rendered from the client's ADT terrain files
   mapstore.py   map settings (cache, shading, workers, client folders) in livemap.sqlite
   clientdata.py MPQ + DBC + BLP reading
-  worlddb.py    quest givers / objectives / turn-ins, travel nodes, NPC / object layers
+  worlddb.py    quest givers / objectives / turn-ins, travel nodes and their stored paths, NPC / object layers
+  transports.py tails transport.csv (every spawned transport) and bot_transport.csv (bot ride trace, fallback)
+  transportart.py renders a transport's own client model (WMO/M2) top-down for the live transports layer
   live.py       tails bot_positions.csv for the live map (LiveFeed), characters-DB fallback (DbFeed), bot cards, recent events
   gamedata/     dungeon-door table per expansion, used when no world database is configured
   app.py        run reconstruction (map choice, track, markers)

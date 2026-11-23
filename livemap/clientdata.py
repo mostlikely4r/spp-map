@@ -126,7 +126,7 @@ class ClientArchives:
             return None
 
 
-CLIENT_DBCS = ("AreaTable", "AreaTrigger", "DungeonMap", "DungeonMapChunk", "FactionTemplate", "LiquidType", "Map",
+CLIENT_DBCS = ("AreaTable", "AreaTrigger", "DungeonMap", "DungeonMapChunk", "FactionTemplate", "GameObjectDisplayInfo", "LiquidType", "Map",
                "WMOAreaTable", "WorldMapArea", "WorldMapOverlay")
 
 

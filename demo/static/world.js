@@ -11,7 +11,7 @@ const ROLE_COLORS = { flightmaster: '#ffe066', innkeeper: '#ff9f43', auctioneer:
 const INTENT_COLORS = { quest: '#ffd200', 'trainer class': '#a29bfe', 'trainer trade': '#a29bfe', 'trainer mount': '#a29bfe', Bank: '#c8d6e5', AH: '#c8d6e5', Mail: '#c8d6e5',
   Repair: '#8395a7', Vendor: '#8395a7', GatherFishing: '#48dbfb', GatherSkinning: '#e17055', GatherMining: '#b2bec3', GatherHerbalism: '#55efc4',
   Grind: '#ff6b6b', pvp: '#ff3f34', city: '#fab1a0', GenericRpg: '#fd79a8' };
-const DEFAULT_LAYERS = { dungeons: true, tests: false, steep: false, swim: false, bots: true, names: false, zones: true, labels: true, events: true, intents: false, npcs: false, objects: false, nodes: false, tele: false, zonelv: false };
+const DEFAULT_LAYERS = { dungeons: true, tests: false, steep: false, swim: false, bots: true, names: false, zones: true, labels: true, events: true, intents: false, npcs: false, objects: false, nodes: false, walkpaths: false, flightpaths: false, transportpaths: false, portalpaths: false, transports: false, tele: false, zonelv: false };
 const GO_COLORS = { chest: '#feca57', questgiver: '#ffd200', mailbox: '#c8d6e5', meetingstone: '#a29bfe', fishinghole: '#48dbfb', door: '#576574', generic: '#8395a7' };
 const EVENT_STYLE = { death: ['#e6463c', 'died'], levelup: ['#ffd200', 'level up'], quest: ['#3cdc5a', 'quest'], pvp: ['#ff6b6b', 'pvp'],
   trade: ['#1dd1a1', 'trade'], gear: ['#a29bfe', 'gear'], revive: ['#a0f0ff', 'revived'], kill: ['#ff9f43', 'kill'], group: ['#48dbfb', 'group'],
@@ -20,6 +20,11 @@ const COLOR_MODES = [['faction', 'faction'], ['class', 'class'], ['level', 'leve
 const FILTERS = [['all', 'everyone'], ['players', 'players + their bots'], ['combat', 'in combat'], ['dead', 'dead'], ['group', 'grouped'], ['test', 'running a test'], ['idle', 'inactive']];
 const MAX_LEVEL = { vanilla: 60, tbc: 70, wotlk: 80 };
 const ADT_YD = 533.33333333, ADT_PX = 1024;
+const TRAVEL_GROUPS = [['walkpaths', 'walk', 'travel paths'], ['flightpaths', 'flight', 'flight paths'],
+  ['transportpaths', 'transport', 'transport paths'], ['portalpaths', 'portal', 'portal paths']];
+const TRAVEL_GROUP_OF = { 1: 'walk', 2: 'portal', 3: 'transport', 4: 'flight', 5: 'portal', 6: 'portal' };
+const TRAVEL_GROUP_COLORS = { walk: '#28c8ff', flight: '#ff9600', transport: '#c800ff', portal: '#ffd200' };
+const TRANSPORT_COLOR = '#00d2d3';
 const LM_CRS = Object.assign({}, L.CRS.Simple, {
   scale: z => (ADT_PX / ADT_YD) * Math.pow(2, z - 1),
   zoom: s => Math.log2(s / (ADT_PX / ADT_YD)) + 1,
@@ -136,10 +141,13 @@ async function wapi(path, opts) {
 function stopWorld() {
   W.gen = (W.gen || 0) + 1;
   clearInterval(W.timer); clearInterval(W.slowTimer);
+  clearTimeout(W.nodeTimer);
   W.timer = W.slowTimer = null;
   W.markers.clear(); W.selected = null; W.trail = null; W.layers = null; W.fitted = false; W.viewApplied = false;
   W.zoneLabels = null; W.zoneLevels = null; W.place = null; W.ov = null; W.inst = []; W.top = {}; W.counts = {};
   W.cut = null; W.overlays = {}; W.sceneGround = null; W.scene = false; W.focus = null; W.map = null; W.cont = {}; W.base0 = [0, 0]; W.mapSig = null;
+  W.pathChips = [];
+  W.ts = null;
   document.body.classList.remove('worldmode');
 }
 
@@ -320,7 +328,7 @@ async function worldPage(core, mapId) {
   W.backRenderer = L.svg({ pane: 'instback' });
   W.layers = {
     base: L.layerGroup().addTo(mapObj), zones: L.layerGroup(), labels: L.layerGroup(), bots: L.layerGroup(),
-    npcs: L.layerGroup(), objects: L.layerGroup(), nodes: L.layerGroup(), events: L.layerGroup(), tests: L.layerGroup(), tele: L.layerGroup(), intents: L.layerGroup(), zonelv: L.layerGroup(), sel: L.layerGroup().addTo(mapObj),
+    npcs: L.layerGroup(), objects: L.layerGroup(), nodes: L.layerGroup(), events: L.layerGroup(), tests: L.layerGroup(), tele: L.layerGroup(), intents: L.layerGroup(), zonelv: L.layerGroup(), transports: L.layerGroup(), sel: L.layerGroup().addTo(mapObj),
   };
   W.renderer = L.canvas({ padding: 0.3 });
   drawBase();
@@ -329,8 +337,10 @@ async function worldPage(core, mapId) {
     { chips: terrainRow, tag: terrainTag, allow: () => W.art === 'minimap',
       onInfo: fresh => { if (W.info) W.info.terrain_render = fresh; drawBase(); renderStyle(); syncOverlays(); } });
   renderStyle();
+  let nodesChip = null;
+  const pathChips = [];
   for (const [key, label] of [['bots', 'bots'], ['names', 'names'], ['labels', worldScene() ? 'zone + map names' : 'zone names'], ['zonelv', 'zone levels'], ['events', 'deaths / quests / levels'],
-    ['intents', 'travel intent'], ['tests', 'tests run here'], ['steep', 'too steep to walk'], ['swim', 'swimming water'], ['npcs', 'NPCs'], ['objects', 'objects'], ['nodes', 'travel nodes'], ['tele', 'teleport cache']]) {
+    ['intents', 'travel intent'], ['tests', 'tests run here'], ['steep', 'too steep to walk'], ['swim', 'swimming water'], ['npcs', 'NPCs'], ['objects', 'objects'], ['nodes', 'travel nodes'], ['transports', 'live transports'], ['tele', 'teleport cache']]) {
     if (W.hidden.has(key)) continue;
     const info = W.caps && W.caps.layers ? W.caps.layers[key] : null;
     const approx = info && info.status === 'degraded';
@@ -342,6 +352,22 @@ async function worldPage(core, mapId) {
       updateLayerBadge();
     };
     chips.append(chip);
+    if (key === 'nodes') nodesChip = chip;
+  }
+  if (nodesChip) {
+    let last = nodesChip;
+    for (const [key, group, label] of TRAVEL_GROUPS) {
+      if (W.hidden.has(key)) continue;
+      const info = W.caps && W.caps.layers ? W.caps.layers[key] : null;
+      const chip = el('span', { class: 'chip sub' + (W.on[key] ? ' on' : ''), title: info && info.source ? 'from ' + info.source : null }, label);
+      chip.onclick = () => {
+        W.on[key] = !W.on[key]; chip.classList.toggle('on', W.on[key]); wSaveLayers();
+        applyLayer(key);
+        updateLayerBadge();
+      };
+      last.after(chip); last = chip; pathChips.push(chip);
+    }
+    W.pathChips = pathChips;
   }
   if (W.hidden.size && LM.mode !== 'static') {
     const first = [...W.hidden].find(k => k !== 'tests') || [...W.hidden][0];
@@ -351,7 +377,7 @@ async function worldPage(core, mapId) {
   updateLayerBadge();
   for (const key of Object.keys(W.on)) applyLayer(key);
   mapObj.on('moveend', debounce(() => { refreshViewportLayers(); updateZones(); updateNames(); updateZoneLevelLabels(); updateLod(); updateClusterChips(); saveView(); }, 400));
-  mapObj.on('zoomend', debounce(() => { updateLod(); updateClusterChips(); if (W.terrain) W.terrain.sync(); syncSceneGround(); syncOverlays(); }, 150));
+  mapObj.on('zoomend', debounce(() => { updateLod(); updateClusterChips(); if (W.terrain) W.terrain.sync(); syncSceneGround(); syncOverlays(); if (W.on.transports) loadTransports(); }, 150));
   mapObj.on('click', () => { closeSheet(); setDrawer(false); });
   ingestSnapshot(await wapi(`live?core=${W.core}&map=${apiMap()}`));
   const want = new URLSearchParams(location.search).get('bot');
@@ -982,12 +1008,19 @@ function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;
 function applyLayer(key) {
   if (!W.layers) return;
   const layer = { bots: W.layers.bots, zones: W.layers.zones, labels: W.layers.labels, npcs: W.layers.npcs, objects: W.layers.objects,
-    nodes: W.layers.nodes, events: W.layers.events, tests: W.layers.tests, tele: W.layers.tele, intents: W.layers.intents, zonelv: W.layers.zonelv }[key];
+    nodes: W.layers.nodes, events: W.layers.events, tests: W.layers.tests, tele: W.layers.tele, intents: W.layers.intents, zonelv: W.layers.zonelv,
+    transports: W.layers.transports }[key];
   styleVisibility();
   if (key === 'names') return updateNames();
   if (key === 'dungeons') return;
   if (key === 'steep' || key === 'swim') { syncOverlays(); legend(); return; }
+  if (TRAVEL_GROUPS.some(([k]) => k === key)) {
+    legend();
+    if (W.on.nodes) queueNodeLoad();
+    return;
+  }
   if (!layer) return;
+  if (key === 'nodes' || key === 'transports') legend();
   if (W.on[key]) {
     layer.addTo(mapObj);
     if (key === 'zones' || key === 'labels') updateZones();
@@ -996,12 +1029,14 @@ function applyLayer(key) {
     if (key === 'tests') loadTests();
     if (key === 'intents') loadIntents();
     if (key === 'zonelv') loadZoneLevels();
+    if (key === 'transports') loadTransports();
   } else mapObj.removeLayer(layer);
 }
 
 async function poll() {
   try {
     ingestSnapshot(await wapi(`live?core=${W.core}&map=${apiMap()}`));
+    if (W.on.transports) loadTransports();
   } catch (e) { W.ui.status.textContent = String(e.message || e); }
 }
 
@@ -1106,6 +1141,8 @@ function legend() {
   if (W.on.swim) box.append(item('rgba(120,220,255,0.6)', 'wading'), item('rgba(20,90,255,0.8)', 'swimming'), item('#ff5000', 'lava'), item('#78d200', 'slime'));
   if (W.on.tests) for (const [k, c] of Object.entries(VERDICT_COLORS)) box.append(el('span', {}, el('span', { class: 'dot', style: `background:transparent;border:3px solid ${c}` }), 'test ' + k.toLowerCase()));
   if (W.on.events) for (const k of ['death', 'levelup', 'quest']) box.append(el('span', {}, el('span', { class: 'dot sq', style: `background:${EVENT_STYLE[k][0]}` }), EVENT_STYLE[k][1]));
+  if (W.on.nodes) for (const [key, group, label] of TRAVEL_GROUPS) if (W.on[key]) box.append(item(TRAVEL_GROUP_COLORS[group], label));
+  if (W.on.transports) box.append(el('span', {}, el('span', { class: 'dot', style: `background:${TRANSPORT_COLOR}` }), 'live transport'));
 }
 
 const VERDICT_COLORS = { PASS: '#3cdc5a', FAIL: '#ff3b3b', ABORT: '#ff9f43', IMPOSSIBLE: '#8395a7' };
@@ -1145,6 +1182,134 @@ function styleVisibility() {
   W.ui.npcSelect.style.display = W.on.npcs ? '' : 'none';
   W.ui.pathSelect.style.display = W.on.nodes ? '' : 'none';
   W.ui.styleRow.style.display = W.on.npcs || W.on.nodes ? '' : 'none';
+  for (const chip of W.pathChips || []) chip.style.display = W.on.nodes ? '' : 'none';
+}
+
+function activePathGroups() {
+  return TRAVEL_GROUPS.filter(([key]) => W.on[key]).map(([, group]) => group);
+}
+
+function queueNodeLoad() {
+  clearTimeout(W.nodeTimer);
+  W.nodeTimer = setTimeout(() => loadViewportLayer('nodes'), 80);
+}
+
+function transportHeading(t) {
+  const pts = (t.trail || []).filter(p => p[2] === t.map);
+  if (pts.length < 2) return 0;
+  const last = pts[pts.length - 1];
+  for (let i = pts.length - 2; i >= 0; i--) {
+    const dx = last[0] - pts[i][0], dy = last[1] - pts[i][1];
+    const d = Math.hypot(dx, dy);
+    if (d < 1.5) continue;
+    return Math.atan2(-dy / d, -dx / d);
+  }
+  return 0;
+}
+
+function transportTip(t) {
+  const age = t.age < 90 ? t.age + ' s' : Math.round(t.age / 60) + ' min';
+  return `${t.name} · ${t.passengers} bot${t.passengers === 1 ? '' : 's'} aboard`
+    + `${t.speed ? ' · ' + t.speed + ' yd/s' : ''} · seen ${age} ago`;
+}
+
+function transportIcon(t) {
+  const art = t.art;
+  if (!art) return null;
+  const ppy = LM_CRS.scale(mapObj.getZoom());
+  const spanY = art.x1 - art.x0, spanX = art.y1 - art.y0;
+  const px = Math.max(spanX, spanY) * ppy;
+  if (px < 8 || Math.min(spanX, spanY) * ppy < 4) return null;
+  const scale = Math.min(1, 768 / px);
+  const rot = typeof t.o === 'number' ? t.o : transportHeading(t);
+  const cxLocal = (art.x0 + art.x1) / 2, cyLocal = (art.y0 + art.y1) / 2;
+  const pos = bpos(t.map, t.x + cxLocal * Math.cos(rot) - cyLocal * Math.sin(rot),
+                  t.y + cxLocal * Math.sin(rot) + cyLocal * Math.cos(rot));
+  if (!pos) return null;
+  const w = Math.max(4, spanX * ppy * scale), h = Math.max(4, spanY * ppy * scale);
+  const deg = (-rot * 180 / Math.PI).toFixed(1);
+  return { pos, rot, sig: `${art.url}|${Math.round(deg)}|${Math.round(w)}|${Math.round(h)}|${t.live ? 1 : 0}`,
+    icon: L.divIcon({ className: 'wtoicon' + (t.live ? '' : ' stale'),
+      html: `<img src="${asset(art.url)}" draggable="false" style="transform:rotate(${deg}deg)">`,
+      iconSize: [w, h], iconAnchor: [w / 2, h / 2] }) };
+}
+
+function transportState() {
+  if (!W.ts) W.ts = { marks: new Map(), trails: new Map() };
+  return W.ts;
+}
+
+async function loadTransports() {
+  if (!W.on.transports || !W.layers) return;
+  let data;
+  try { data = await wapi(`live/transports?core=${W.core}&map=${apiMap()}`); } catch (e) { return; }
+  const layer = W.layers.transports;
+  const st = transportState();
+  const seen = new Set();
+  for (const t of data.transports || []) {
+    if (!bpos(t.map, t.x, t.y)) continue;
+    seen.add(t.guid);
+    const tip = transportTip(t);
+    const pts = (t.trail || []).filter(p => p[2] === t.map).map(p => bpos(t.map, p[0], p[1])).filter(Boolean);
+    let trail = st.trails.get(t.guid);
+    if (pts.length > 1) {
+      if (!trail) {
+        trail = L.polyline(pts, { color: TRANSPORT_COLOR, weight: 2, opacity: t.live ? 0.55 : 0.25, dashArray: '5 4', renderer: W.renderer }).addTo(layer);
+        st.trails.set(t.guid, trail);
+      } else {
+        trail.setLatLngs(pts);
+        trail.setStyle({ opacity: t.live ? 0.55 : 0.25 });
+        if (!layer.hasLayer(trail)) layer.addLayer(trail);
+      }
+    } else if (trail) {
+      layer.removeLayer(trail);
+      st.trails.delete(t.guid);
+    }
+    const art = transportIcon(t);
+    const rec = st.marks.get(t.guid);
+    const pos = art ? art.pos : bpos(t.map, t.x, t.y);
+    if (art) {
+      if (!rec || rec.kind !== 'art') {
+        if (rec) { layer.removeLayer(rec.layer); }
+        const marker = L.marker(art.pos, { icon: art.icon, interactive: false, pane: 'instimg' });
+        marker.addTo(layer);
+        st.marks.set(t.guid, { kind: 'art', sig: art.sig, layer: marker, guide: rec && rec.guide });
+      } else {
+        rec.layer.setLatLng(art.pos);
+        if (rec.sig !== art.sig) { rec.layer.setIcon(art.icon); rec.sig = art.sig; }
+      }
+    } else {
+      if (!rec || rec.kind !== 'dot') {
+        if (rec) { layer.removeLayer(rec.layer); }
+        const dot = L.circleMarker(pos, { radius: 6, color: t.live ? '#04262b' : TRANSPORT_COLOR, weight: 2,
+          fill: t.live, fillColor: TRANSPORT_COLOR, fillOpacity: t.live ? 0.95 : 0, opacity: t.live ? 1 : 0.55, renderer: W.renderer });
+        dot.addTo(layer);
+        st.marks.set(t.guid, { kind: 'dot', sig: 'dot', layer: dot, guide: rec && rec.guide });
+      } else {
+        rec.layer.setLatLng(pos);
+      }
+    }
+    const use = st.marks.get(t.guid);
+    if (!use.guide) {
+      use.guide = L.circleMarker(pos, { radius: 10, opacity: 0, fill: true, fillOpacity: 0, renderer: W.renderer }).addTo(layer);
+      use.guide.bindTooltip(tip, { sticky: true });
+    } else {
+      use.guide.setLatLng(pos);
+      use.guide.setTooltipContent(tip);
+      if (!layer.hasLayer(use.guide)) layer.addLayer(use.guide);
+    }
+  }
+  for (const [guid, rec] of [...st.marks]) {
+    if (seen.has(guid)) continue;
+    layer.removeLayer(rec.layer);
+    if (rec.guide) layer.removeLayer(rec.guide);
+    st.marks.delete(guid);
+    const trail = st.trails.get(guid);
+    if (trail) { layer.removeLayer(trail); st.trails.delete(guid); }
+  }
+  for (const [guid, trail] of [...st.trails]) {
+    if (!seen.has(guid)) { layer.removeLayer(trail); st.trails.delete(guid); }
+  }
 }
 
 async function loadZoneLevels() {
@@ -1202,6 +1367,7 @@ async function loadViewportLayer(key) {
   const b = boundsParams();
   const kind = { npcs: 'creatures', objects: 'objects', nodes: 'nodes', tele: 'telecache' }[key];
   const q = new URLSearchParams({ core: W.core, map: apiMap(), kind, ...b });
+  if (key === 'nodes') q.set('groups', activePathGroups().join(',') || 'none');
   if (worldScene()) {
     q.set('mode', W.placeMode); q.set('honest', W.honest ? '1' : '0'); q.set('dungeons', W.on.dungeons ? '1' : '0');
     if (W.honest && W.turn) q.set('turn', '1');
@@ -1218,21 +1384,30 @@ async function loadViewportLayer(key) {
   const layer = W.layers[key];
   layer.clearLayers();
   if (key === 'nodes') {
+    const want = new Set(activePathGroups());
     for (const o of rows(d.links)) {
       const link = o.v;
-      let color = LINK_COLORS[link.type] || '#fff';
-      let tip = null;
-      if (W.pathColor !== 'type' && link.type === 1) {
+      const group = link.group || TRAVEL_GROUP_OF[link.type] || 'walk';
+      if (!want.has(group)) continue;
+      let color = TRAVEL_GROUP_COLORS[group] || '#fff';
+      let tip = link.from && link.to ? `${link.from} → ${link.to}` : null;
+      if (W.pathColor !== 'type' && group === 'walk') {
         const dz = link.danger || [0, 0, 0];
         const lvl = Math.max(dz[0], W.pathColor === 'alliance' ? dz[2] : dz[1]);
         color = lvl ? levelColor(lvl) : '#576574';
         tip = lvl ? `toughest creature for ${W.pathColor === 'alliance' ? 'Alliance' : 'Horde'}: level ${lvl}` : 'no hostile creatures recorded';
       }
-      const pts = link.points.map(p => at(o.map, p[0], p[1])).filter(Boolean);
-      if (pts.length < 2) continue;
-      const line = L.polyline(pts, { color, weight: link.type === 1 ? (W.pathColor === 'type' ? 2 : 3) : 1, opacity: 0.8, renderer: W.renderer });
-      if (tip) line.bindTooltip(tip, { sticky: true });
-      line.addTo(layer);
+      const segs = link.segs || [{ map: o.map, points: link.points || [] }];
+      const total = segs.reduce((n, s) => n + s.points.length, 0);
+      const weight = group === 'walk' && W.pathColor !== 'type' ? 3 : (total > 2 ? 2 : 1);
+      for (const seg of segs) {
+        if (!scene && seg.map !== W.map) continue;
+        const pts = seg.points.map(p => at(seg.map, p[0], p[1])).filter(Boolean);
+        if (pts.length < 2) continue;
+        const line = L.polyline(pts, { color, weight, opacity: 0.8, renderer: W.renderer });
+        if (tip) line.bindTooltip(tip, { sticky: true });
+        line.addTo(layer);
+      }
     }
     for (const o of rows(d.nodes)) {
       const n = o.v;
