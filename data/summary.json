@@ -1,0 +1,1 @@
+{"summary":{"verdicts":[{"core":"wotlk","verdict":"FAIL","n":3},{"core":"wotlk","verdict":"PASS","n":3}],"tests":[{"core":"wotlk","n":6,"last":"2026-11-24 16:52:18"}]},"flips":[],"regressions":[],"cores":["wotlk"],"last_ingest":"2026-11-24 16:52:18","remote":true}
