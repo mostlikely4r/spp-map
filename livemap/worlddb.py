@@ -309,10 +309,13 @@ class WorldDb:
         for a, b, t, obj in links:
             if b not in ends:
                 continue
-            pair = (min(a, b), max(a, b), t)
+            directed = t in TRAVEL_GROUPS["transport"] and (a, b) in walked
+            if t in TRAVEL_GROUPS["transport"] and not directed and (b, a) in walked:
+                continue
+            pair = (a, b, t) if directed else (min(a, b), max(a, b), t)
             if pair in seen:
                 continue
-            points = walked.get((a, b)) or walked.get((b, a))
+            points = walked.get((a, b)) if directed else walked.get((a, b)) or walked.get((b, a))
             if not points and ends[b].get("map", map_id) != map_id:
                 continue
             seen.add(pair)
@@ -323,7 +326,7 @@ class WorldDb:
                 segs[-1]["points"].append([round(x, 1), round(y, 1)])
             if not segs:
                 segs = [{"map": map_id, "points": [[nodes[a]["x"], nodes[a]["y"]], [ends[b]["x"], ends[b]["y"]]]}]
-            link = {"key": f"{min(a, b)}-{max(a, b)}-{t}", "type": t, "group": TRAVEL_GROUP_OF.get(t, "walk"),
+            link = {"key": "-".join(map(str, pair)), "type": t, "group": TRAVEL_GROUP_OF.get(t, "walk"),
                     "segs": segs,
                     "from": nodes[a]["name"], "to": ends[b]["name"],
                     "danger": danger.get((a, b)) or danger.get((b, a)) or [0, 0, 0]}
