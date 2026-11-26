@@ -290,6 +290,7 @@ function stopWorld() {
   W.timer = W.slowTimer = null;
   W.markers.clear(); W.selected = null; W.trail = null; W.layers = null; W.fitted = false; W.viewApplied = false;
   W.zoneLabels = null; W.zoneLevels = null; W.place = null; W.ov = null; W.inst = []; W.top = {}; W.counts = {};
+  clearTimeout(W.groundTimer); W.groundTimer = null; W.ground = null;
   W.cut = null; W.overlays = {}; W.sceneGround = null; W.scene = false; W.focus = null; W.map = null; W.cont = {}; W.base0 = [0, 0]; W.mapSig = null;
   W.pathChips = [];
   W.ts = null;
@@ -439,6 +440,7 @@ async function worldPage(core, mapId) {
     window.addEventListener('resize', () => syncFab());
   }
   const terrainTag = el('div', { class: 'wterrain hidden' });
+  const groundTag = el('div', { class: 'wground hidden' });
   const terrainRow = null;
   const styleBox = el('div', {});
   const ground = el('div', {});
@@ -461,7 +463,7 @@ async function worldPage(core, mapId) {
   waiting.remove();
   clearInterval(W.waitTick);
   W.waitTick = null;
-  add(el('div', { class: 'wmapwrap' }, mapDiv, status, busy, terrainTag, sheet, backdrop, drawer,
+  add(el('div', { class: 'wmapwrap' }, mapDiv, status, busy, terrainTag, groundTag, sheet, backdrop, drawer,
     el('div', { class: 'wfab' }, layersBtn)));
   if (worldScene()) {
     const placeSelect = el('select', { class: 'wsel', onchange: e => {
@@ -476,7 +478,7 @@ async function worldPage(core, mapId) {
     sceneBlock.append(el('div', { class: 'wdtitle' }, 'Dungeons on the map'), placeSelect, el('div', { class: 'chips' }, W.honestChip, W.turnChip, W.plainChip));
   }
   W.ui = { mapSelect, chips, status, legendBox, sheet, styleRow, npcSelect, pathSelect, terrainTag, terrainRow,
-    drawer, backdrop, badge, ground, styleBox, sceneBlock, layersBtn, busy, busyText, busyTime, busyHint, fab: document.querySelector('.wfab') };
+    drawer, backdrop, badge, ground, styleBox, sceneBlock, layersBtn, busy, busyText, busyTime, busyHint, groundTag, fab: document.querySelector('.wfab') };
   styleVisibility();
   paintBusy();
 
@@ -505,6 +507,7 @@ async function worldPage(core, mapId) {
     { chips: terrainRow, tag: terrainTag, allow: () => W.art === 'minimap',
       onInfo: fresh => { if (W.info) W.info.terrain_render = fresh; drawBase(); renderStyle(); syncOverlays(); } });
   renderStyle();
+  pollSceneTerrain();
   let nodesChip = null;
   let eventsChip = null;
   const pathChips = [];
@@ -564,8 +567,9 @@ async function worldPage(core, mapId) {
   }
   updateLayerBadge();
   for (const key of Object.keys(W.on)) if (!EVENT_TYPE[key]) applyLayer(key);
-  mapObj.on('moveend', debounce(() => { refreshViewportLayers(); updateZones(); updateNames(); updateZoneLevelLabels(); updateLod(); updateClusterChips(); saveView(); }, 400));
-  mapObj.on('zoomend', debounce(() => { updateLod(); updateClusterChips(); if (W.terrain) W.terrain.sync(); syncSceneGround(); syncOverlays(); if (W.on.transports) loadTransports(); }, 150));
+  mapObj.on('movestart', () => { if (W.sceneGround) W.ground = { tiles: 0, sent: 0, missed: 0, outside: 0 }; });
+  mapObj.on('moveend', debounce(() => { refreshViewportLayers(); updateZones(); updateNames(); updateZoneLevelLabels(); updateLod(); updateClusterChips(); saveView(); clearTimeout(W.groundTimer); W.groundTimer = setTimeout(groundNote, 1600); }, 400));
+  mapObj.on('zoomend', debounce(() => { updateLod(); updateClusterChips(); if (W.terrain) W.terrain.sync(); syncSceneGround(); syncOverlays(); groundNote(); if (W.on.transports) loadTransports(); }, 150));
   mapObj.on('click', () => { closeSheet(); setDrawer(false); });
   ingestSnapshot(await wapi(`live?core=${W.core}&map=${apiMap()}`));
   const want = new URLSearchParams(location.search).get('bot');
@@ -692,6 +696,8 @@ const SceneGround = L.GridLayer.extend({
     const x0 = coords.x * 256, y0 = coords.y * 256;
     const prefs = this.options.prefs;
     const jobs = [];
+    let sent = 0;
+    let missed = 0;
     for (const src of this.options.sources) {
       const b = src.box;
       if (-b.right * s < x0 || -b.left * s > x0 + 256 || -b.bottom * s < y0 || -b.top * s > y0 + 256) continue;
@@ -699,18 +705,79 @@ const SceneGround = L.GridLayer.extend({
       for (let ty = Math.floor(sy / 256); ty <= Math.floor((sy + 255) / 256); ty++)
         for (let tx = Math.floor(sx / 256); tx <= Math.floor((sx + 255) / 256); tx++) {
           const url = asset(`/tiles/${W.core}/adt/${src.id}/${coords.z}/${tx}/${ty}.webp?v=${src.info.version}&shade=${prefs.shade}${bldParam(prefs)}`);
+          sent += 1;
           jobs.push(new Promise(res => {
             const img = new Image();
             img.onload = () => { ctx.drawImage(img, tx * 256 - sx, ty * 256 - sy); res(); };
-            img.onerror = res;
+            img.onerror = () => { missed += 1; res(); };
             img.src = url;
           }));
         }
     }
-    Promise.all(jobs).then(() => done(null, tile));
+    Promise.all(jobs).then(() => { groundSettle(sent, missed); done(null, tile); });
     return tile;
   },
 });
+
+function groundSettle(sent, missed) {
+  if (!W.ground) return;
+  W.ground.tiles += 1;
+  W.ground.sent += sent;
+  W.ground.missed += missed;
+  if (!sent) W.ground.outside += 1;
+  clearTimeout(W.groundTimer);
+  W.groundTimer = setTimeout(groundNote, 400);
+}
+
+function groundNote() {
+  W.groundTimer = null;
+  const tag = W.ui && W.ui.groundTag;
+  if (!tag) return;
+  const layer = W.sceneGround && W.sceneGround.layer;
+  if (!layer) { tag.classList.add('hidden'); return; }
+  const st = W.ground;
+  const native = layer.options.maxNativeZoom === undefined ? 1 : layer.options.maxNativeZoom;
+  if (mapObj.getZoom() > native + 0.01) {
+    tag.textContent = 'no finer ground at this zoom — the game files stop at about half a yard per pixel (zoom out a step for the sharp level)';
+    tag.title = 'above zoom ' + native + ' the drawn ground is scaled up from the sharpest rendered level; the painted zone maps stay sharp because they come from a different file';
+    tag.classList.remove('hidden');
+    return;
+  }
+  if (!st || !st.tiles || !(st.missed || st.outside)) {
+    tag.classList.add('hidden');
+    return;
+  }
+  const blank = st.outside + (st.missed ? 1 : 0);
+  tag.textContent = st.outside === st.tiles
+    ? 'no drawn ground here — this view is outside the mapped area'
+    : `drawn ground missing in ${blank} of ${st.tiles} tiles here — that part stays at map-art resolution`;
+  tag.title = st.missed
+    ? `${st.missed} ground tiles came back empty (the client has no data, or the render failed); ${st.outside} tiles lie outside every mapped continent`
+    : 'these tiles are outside the area the map draws ground for, so the upscaled map art shows instead';
+  tag.classList.remove('hidden');
+}
+
+async function pollSceneTerrain(tries) {
+  if (!worldScene() || !W.atlas) return;
+  const round = tries || 0;
+  const waiting = W.atlas.filter(m => m.continent && placeOf(m.id))
+    .map(m => m.id)
+    .filter(id => !(W.cont[id] && W.cont[id].terrain_render && W.cont[id].terrain_render.available));
+  if (!waiting.length) { syncSceneGround(true); return; }
+  if (round > 8) return;
+  let pending = false;
+  for (const id of waiting) {
+    try {
+      const fresh = await wapi(`terrain?core=${W.core}&map=${id}`);
+      if (W.cont[id] && fresh) {
+        W.cont[id].terrain_render = fresh;
+        if (fresh.pending) pending = true;
+      }
+    } catch (e) { pending = true; }
+  }
+  syncSceneGround(true);
+  if (pending) setTimeout(() => pollSceneTerrain(round + 1), 1500);
+}
 
 function sceneGroundSources() {
   const out = [];
@@ -732,12 +799,18 @@ function syncSceneGround(force) {
   if (W.sceneGround && (!want || force || W.sceneGround.key !== key)) {
     mapObj.removeLayer(W.sceneGround.layer);
     W.sceneGround = null;
+    W.ground = null;
+    if (W.ui && W.ui.groundTag) W.ui.groundTag.classList.add('hidden');
   }
   if (want && !W.sceneGround) {
     const layer = new SceneGround({ pane: 'terrain', tileSize: 256, minNativeZoom: info.min_zoom, maxNativeZoom: info.max_zoom,
       minZoom: mapObj.getMinZoom(), maxZoom: mapObj.getMaxZoom(), noWrap: true, keepBuffer: 2, updateWhenIdle: false, sources, prefs });
+    watchTiles(layer, 'ground', 'drawing the ground', GROUND_HINT);
     layer.addTo(mapObj);
+    W.ground = { tiles: 0, sent: 0, missed: 0, outside: 0 };
     W.sceneGround = { layer, key };
+    clearTimeout(W.groundTimer);
+    W.groundTimer = setTimeout(groundNote, 600);
   }
 }
 
@@ -777,6 +850,20 @@ function terrainUrl(core, mapId, info, prefs) {
   return asset(`/tiles/${core}/adt/${mapId}/{z}/{x}/{y}.webp?v=${info.version}&shade=${prefs.shade}${bldParam(prefs)}`);
 }
 
+function watchTiles(layer, key, label, hint) {
+  let pending = 0;
+  let held = false;
+  const settle = step => {
+    pending = Math.max(0, pending + step);
+    if (pending && !held) { held = true; busyHold(key, label, hint); }
+    else if (!pending && held) { held = false; busyRelease(key); }
+  };
+  layer.on('tileloadstart', () => settle(1));
+  layer.on('tileload tileerror tileabort', () => settle(-1));
+  layer.on('load remove', () => { pending = 0; if (held) { held = false; busyRelease(key); } });
+  return layer;
+}
+
 function terrainLayerFor(info, core, mapId, prefs, bounds, map) {
   const layer = L.tileLayer(terrainUrl(core, mapId, info, prefs), {
     tileSize: 256, minNativeZoom: info.min_zoom, maxNativeZoom: info.max_zoom,
@@ -784,16 +871,7 @@ function terrainLayerFor(info, core, mapId, prefs, bounds, map) {
     noWrap: true, keepBuffer: 2, pane: 'terrain', updateWhenIdle: false,
     bounds: bounds || undefined,
   });
-  let pending = 0;
-  let held = false;
-  const settle = step => {
-    pending = Math.max(0, pending + step);
-    if (pending && !held) { held = true; busyHold('terrain', 'drawing the ground', 'the first look at an area is drawn from your game client, then it is instant'); }
-    else if (!pending && held) { held = false; busyRelease('terrain'); }
-  };
-  layer.on('tileloadstart', () => settle(1));
-  layer.on('tileload tileerror tileabort', () => settle(-1));
-  layer.on('load remove', () => { pending = 0; if (held) { held = false; busyRelease('terrain'); } });
+  watchTiles(layer, 'terrain', 'drawing the ground', GROUND_HINT);
   layer.lmKey = terrainKey(prefs);
   return layer;
 }
@@ -1268,7 +1346,8 @@ function ingestSnapshot(snap) {
     : snap.source === 'demo' ? 'demo, recorded ' + (snap.newest || '').slice(0, 10) + ' (plays in a loop)'
     : (snap.live ? 'live' : 'not live (server stopped or positions log off)');
   const where = W.info && W.info.name ? W.info.name : '';
-  W.ui.status.textContent = `${where}${where ? ' · ' : ''}${snap.core} · ${age} · ${worldScene() ? W.markers.size : snap.bots.length} here · ${snap.newest ? snap.newest.slice(11) : 'no data yet'}${lost}`;
+  const tn = W.on.transports ? transportNote() : null;
+  W.ui.status.textContent = `${where}${where ? ' · ' : ''}${snap.core} · ${age} · ${worldScene() ? W.markers.size : snap.bots.length} here · ${snap.newest ? snap.newest.slice(11) : 'no data yet'}${lost}${tn ? ' · ' + tn : ''}`;
   if (W.selected) refreshSelected();
 }
 
@@ -1356,6 +1435,10 @@ function legend() {
   if (W.on.events) for (const [kind, chip] of EVENT_TYPES) if (eventOn(kind)) box.append(eventLegend(kind, chip));
   if (W.on.nodes) for (const [key, group, label] of TRAVEL_GROUPS) if (W.on[key]) box.append(item(TRAVEL_GROUP_COLORS[group], label));
   if (W.on.transports) box.append(el('span', {}, el('span', { class: 'dot', style: `background:${TRANSPORT_COLOR}` }), 'live transport'));
+  const tn = W.on.transports ? transportNote() : null;
+  if (tn) box.append(el('span', { class: 'wnote', title: W.transportAge && W.transportAge.stale
+    ? 'the position log stopped when the server stopped; these are the boats as they were in the last snapshot'
+    : 'no boat, zeppelin or tram has been logged in the last 30 minutes — start the server to see them live' }, tn));
 }
 
 const VERDICT_COLORS = { PASS: '#3cdc5a', FAIL: '#ff3b3b', ABORT: '#ff9f43', IMPOSSIBLE: '#8395a7' };
@@ -1363,6 +1446,7 @@ const VERDICT_COLORS = { PASS: '#3cdc5a', FAIL: '#ff3b3b', ABORT: '#ff9f43', IMP
 const LOAD_LABELS = { npcs: 'loading NPCs', objects: 'loading objects', nodes: 'loading travel paths', tele: 'loading teleport spots' };
 const DB_HINT = 'reading the world database — big views take a few seconds';
 const IMG_HINT = 'first look is slow, later looks are instant';
+const GROUND_HINT = 'the first look at an area is drawn from your game client, then it is instant';
 
 async function withBusy(key, label, hint, work) {
   busyHold(key, label, hint);
@@ -1520,6 +1604,14 @@ function transportIcon(t) {
       iconSize: [w, h], iconAnchor: [w / 2, h / 2] }) };
 }
 
+function transportNote() {
+  const a = W.transportAge;
+  if (!a) return null;
+  if (!a.count) return 'no transport sightings in the last 30 min';
+  if (a.stale) return `no transport seen in the last 30 min — showing the last snapshot${a.newest ? ' (' + a.newest.slice(5, 16) + ')' : ''}`;
+  return null;
+}
+
 function transportState() {
   if (!W.ts) W.ts = { marks: new Map(), trails: new Map() };
   return W.ts;
@@ -1529,6 +1621,7 @@ async function loadTransports() {
   if (!W.on.transports || !W.layers) return;
   let data;
   try { data = await wapi(`live/transports?core=${W.core}&map=${apiMap()}`); } catch (e) { return; }
+  W.transportAge = { count: (data.transports || []).length, stale: !!data.stale, newest: data.newest || null, source: data.source || null };
   const layer = W.layers.transports;
   const st = transportState();
   const seen = new Set();
@@ -1596,6 +1689,7 @@ async function loadTransports() {
   for (const [guid, trail] of [...st.trails]) {
     if (!seen.has(guid)) { layer.removeLayer(trail); st.trails.delete(guid); }
   }
+  legend();
 }
 
 async function loadZoneLevels() {

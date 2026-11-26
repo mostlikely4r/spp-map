@@ -233,12 +233,20 @@ class TransportFeed:
     def snapshot(self, map_id=None, seconds=STALE_S):
         self.poll()
         clock = int(time.time())
+        stale = False
         with self.lock:
             cutoff = clock - seconds
             rows = [dict(r) for r in self.found.values() if r["epoch"] >= cutoff and (map_id is None or r["map"] == map_id)]
+            if not rows:
+                known = [dict(r) for r in self.found.values() if map_id is None or r["map"] == map_id]
+                if known:
+                    newest = max(r["epoch"] for r in known)
+                    rows = [r for r in known if r["epoch"] == newest]
+                    stale = True
+            trail_cutoff = (max(r["epoch"] for r in rows) - TRAIL_S) if (stale and rows) else cutoff
             rider_cutoff = clock - RIDER_S
             trails = {r["guid"]: [(t[1], t[2], t[3]) for t in self.trails.get(r["guid"], ())
-                                  if t[1] == r["map"] and t[0] >= cutoff] for r in rows}
+                                  if t[1] == r["map"] and t[0] >= trail_cutoff] for r in rows}
             riders = {r["guid"]: sum(1 for epoch in self.riders.get(r["guid"], {}).values() if epoch >= rider_cutoff)
                       for r in rows}
             source = self.source
@@ -257,7 +265,7 @@ class TransportFeed:
             out.append(row)
         out.sort(key=lambda r: r["name"])
         newest_ts = time.strftime(telemetry.TS_FMT, time.localtime(newest)) if newest else None
-        return {"newest": newest_ts, "epoch": newest, "source": source, "transports": out}
+        return {"newest": newest_ts, "epoch": newest, "source": source, "stale": stale, "transports": out}
 
 
 def last_ts(fh, size):

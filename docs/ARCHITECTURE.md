@@ -36,7 +36,10 @@ What works today:
   older builds). Zoomed in, each one is drawn as its own client model, rendered top-down from the
   game's own WMO/M2 files, textured and shaded, scaled to its real size and turned by the orientation
   the server reports. Older sightings (up to 30 minutes) stay on the map faded, at the position last
-  written, so a boat seen a few minutes ago is still visible without pretending to be live. Dungeons with painted floor maps (WotLK) get floor buttons; every other
+  written, so a boat seen a few minutes ago is still visible without pretending to be live; when the
+  whole snapshot is older than that (server stopped), the last snapshot is still drawn — faded, with its
+  age in the tooltip and `no transport seen in the last 30 min — showing the last snapshot (11-25 01:09)`
+  in the status line and the legend — instead of an empty layer. Dungeons with painted floor maps (WotLK) get floor buttons; every other
   dungeon, raid and battleground shows its indoor minimap art (see below).
 
 - **Test explorer.** Every `[BOTTEST]` result from every boot and every core goes into one small
@@ -118,7 +121,14 @@ What works today:
 
 - **Rendered ground, zoomed in.** Close up, the background is drawn from the client's terrain files
   instead of the minimap art: one ADT per request, splatted ground textures, hillshade relief from the
-  height field and real liquid layers, at half a yard per pixel (four times sharper than the minimap).
+  height field and real liquid layers, at **half a yard per pixel** — and that is the sharpest level that
+  exists. The map does not just stop there silently: past zoom 1 the ground is scaled up from that level,
+  so a small note above the map says so (*"no finer ground at this zoom — the game files stop at about
+  half a yard per pixel"*), and when part of the view has no ground at all — tiles outside every mapped
+  continent, or tiles the server could not render — the same note counts them
+  (`drawn ground missing in 3 of 18 tiles here`). The world view composes its ground per continent
+  (`SceneGround`), so the same counters cover it; a continent whose ADT probe was still running when the
+  page loaded is re-polled instead of staying switched off.
   It switches on by zoom (minimap below ~2 yd/px, rendered ground at and above), has a shading switch
   (soft / medium / strong / flat) and a "detailed ground" on/off chip in the map's layer drawer, and a
   Settings section for the cache, the shading default, worker count and client folders. Buildings

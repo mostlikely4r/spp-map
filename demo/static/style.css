@@ -103,6 +103,10 @@ body.worldmode main { max-width: none; padding: 0; }
 .wlegend { padding: 6px 10px 20px; }
 .wterrain { position: absolute; left: 8px; top: 82px; max-width: 78%; z-index: 1200; background: rgba(17,19,23,.82); color: #cfd2d8; font-size: 12px; padding: 3px 8px; border-radius: 8px; pointer-events: none; }
 .wterrain.hidden { display: none; }
+.wground { position: absolute; left: 8px; top: 78px; max-width: min(52%, 460px); z-index: 1150; background: rgba(17,19,23,.86); color: #e6dca0;
+  font-size: 12px; padding: 4px 9px; border-radius: 8px; pointer-events: none; box-shadow: 0 2px 10px rgba(0,0,0,.4); }
+.wground.hidden { display: none; }
+.wnote { color: var(--muted); font-size: 12px; border-left: 2px solid #3a3f49; padding-left: 8px; }
 .wterrainrow .chip { font-size: 12px; padding: 3px 9px; }
 .chip.sub { font-size: 12px; padding: 3px 9px; margin-left: 10px; border-left: 2px solid #353a44; opacity: .92; }
 .chip.sub.on { border-left-color: var(--accent); }
