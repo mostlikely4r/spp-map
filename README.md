@@ -27,7 +27,7 @@ line for anything that is missing.
 | L0 | the game client | world, continent and dungeon maps, zone names, dungeons at their entrances |
 | L1 | + your server's database | online players, NPCs, objects and quest givers on the map |
 | L2 | + PlayerBots | bots on the map (positions as of their last save) |
-| L3 | + the bot log exports (one click on the Help page) | travel intent, teleport cache, zone levels, recent deaths / quests / level-ups |
+| L3 | + the bot log exports (one click on the Help page) | travel intent, teleport cache, zone levels, 22 kinds of bot events with their own icons |
 | L4 | + a PlayerBots build with the live-map exports | the real live map: positions every 5 s, trails, follow a bot, bot state, live boats / zeppelins / trams drawn as their own client models |
 | L5 | + bot test results (bot developers) | test explorer, tests on the map, run pages |
 
@@ -36,7 +36,7 @@ line for anything that is missing.
 | ![World map with bots](docs/screenshots/world.webp) | ![Dungeons drawn at their entrances](docs/screenshots/dungeons.webp) |
 | Live bots on the painted world map | Minimap art, dungeons placed at their entrances |
 | ![NPC and travel layers](docs/screenshots/layers.webp) | ![A bot card and its trail](docs/screenshots/botcard.webp) |
-| NPCs by role and the bots' travel network | Tap a bot: level, class, zone, money, trail, events |
+| NPCs by role and the bots' travel network | Tap a bot: level, class, zone, money, trail, its events |
 | ![Help page](docs/screenshots/help.webp) | ![Test explorer](docs/screenshots/tests.webp) |
 | Help: what works and how to get the rest | Test list with flips and regressions (bot developers) |
 

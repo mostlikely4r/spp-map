@@ -11,9 +11,14 @@ What works today:
 - **Live world map** (`/w`). Every online bot and player on the painted continent, zone and dungeon
   floor maps, refreshed every 3 seconds. Colour by faction, class, level, state or health; filter to
   players and their party bots, fights, deaths, groups, bots running a test or inactive bots. Tap a
-  bot for its card: level, race/class, zone, health, money, group leader, its trail over the last
-  15 minutes, the last hour of events and its recent test runs. Follow a bot, search by name, share
-  the exact view as a link. Layers: zone maps and names, recent deaths / quests / level-ups, NPCs
+  bot for its card: level, race/class, zone, health, money, group leader, its trail and its own events
+  over the window its slider asks for (5 to 120 minutes, 15 by default; past 15 minutes the trail comes
+  from `bot_positions.csv`), a list of those events with an icon per type, and its recent test runs.
+  When the server is stopped the positions fall back to the characters DB, but the trail is still read
+  from `bot_positions.csv` — the last window before the log ends, labelled with that end time.
+  Tapping a row jumps the map to that event; tapping an event icon on the map opens that bot's card.
+  Follow a bot, search by name, share the exact view as a link. Layers: zone maps and names, the
+  `events` layer (22 event types, one chip and one icon each, from the bots' own actions), NPCs
   (coloured by role: flight master, inn, vendor, trainer, quest giver, elite...), game objects and
   the bots' travel network, **travel intent** (dashed line from each bot to where it is heading, coloured
   by purpose: quest, trainer, bank, gathering..., from `travel_map.csv`) and the **teleport cache**
@@ -48,6 +53,14 @@ What works today:
 - **Map badge in the test list.** Each test shows whether its latest run has position data to plot
   (`map` / `no map`), with filters for both. The check runs once per run in the background (newest
   first) and is stored in the catalog (`previews` table).
+- **Events on the live map.** `bot_events.csv` is read back as 22 named types (`death`, `levelup`,
+  `quest_accept`, `quest_turnin`, `quest_progress`, `quest_fail`, `quest_item`, `revive`, `auction`,
+  `trade`, `loot`, `gear`, `trainer`, `talents`, `group`, `guild`, `travel`, `pvp`, plus `kill`,
+  `combat`, `mount` and `other`, off by default for density). Each type is a sub-chip under `events`
+  (choice kept per viewer) and a hand-drawn inline SVG icon at the place it happened, gold-bordered
+  like an action button. Event types are mapped in `live.py` (`EVENT_KINDS`, `EVENT_TYPES`); the client
+  draws the icons, so an action name with no type falls back to a plain dot. Rows carry the bot's guid,
+  which is what makes an icon click open that bot's card.
 - **Tests on the live map.** A 'tests run here' layer puts each test's latest run where it happened
   (where the bot finished when it was tracked, dashed at the quest location otherwise), coloured by
   verdict; tap one to open the run. The top bar has a **Tests** button back to the test list.
@@ -118,7 +131,21 @@ What works today:
 - **One button for the controls.** The live map keeps the map itself full-screen: a single floating
   "Layers" pill (with a count of the active layers) opens a drawer holding the map selector, search,
   colour/filter, every layer toggle, the ground controls, the scene options and the (collapsible)
-  legend. On a wide window the drawer becomes a floating panel on the right.
+  legend. On a wide window the drawer becomes a floating panel on the right. The bot card opens at the
+  bottom left on a wide window, opposite that pill; on a phone the card keeps the full width and the
+  pill moves up to sit just above it (`syncFab()` in `world.js`).
+- **Saying what is loading.** A slow step reports itself instead of looking hung. The first page build
+  shows a spinner and a seconds counter; after that a small pill under the status line names what the
+  client is still waiting for — `drawing the ground`, `loading NPCs`, `loading travel paths`,
+  `drawing this area`, `drawing zone map tiles` — with the elapsed seconds and, once six seconds have
+  passed, one line saying why it is slow ("first look is slow, later looks are instant"). It shows only
+  after half a second, so cached tiles and images never flash it; a batch that drains keeps the pill up
+  for another moment, so a pan across several batches counts the waiting once instead of blinking. One
+  counter in `world.js` feeds it: `busyHold(key, label, hint)` / `busyRelease(key)` (ref-counted per key)
+  with `terrainLayerFor` counting `tileloadstart` against `tileload`/`tileerror`/`tileabort`,
+  `trackedImage()` wrapping every `L.imageOverlay` (basemaps, zone maps, dungeon models) through its
+  `add` event until `load`/`error`/`remove` — `ImageOverlay` has **no** `loading` event, only `GridLayer`
+  does — and `withBusy()` around the layer queries (`layer?kind=`, events, tests, travel intents).
 - **Phone first.** Mobile layout, short links (`/r/<run>`, `/t/<core>/<test>`), and an optional
   Cloudflare quick tunnel with token login, so you can use it away from the PC.
 - **Snapshots.** `livemap snapshot` renders a run page to a PNG (also at `/snapshot/run/<id>.png`).
@@ -223,7 +250,9 @@ livemap/
   worlddb.py    quest givers / objectives / turn-ins, travel nodes and their stored paths, NPC / object layers
   transports.py tails transport.csv (every spawned transport) and bot_transport.csv (bot ride trace, fallback)
   transportart.py renders a transport's own client model (WMO/M2) top-down for the live transports layer
-  live.py       tails bot_positions.csv for the live map (LiveFeed), characters-DB fallback (DbFeed), bot cards, recent events
+  live.py       tails bot_positions.csv for the live map (LiveFeed), characters-DB fallback (DbFeed), bot cards
+                (ring, or log-derived trail anchored at the newest row, shared by both feeds), event types
+                and recent_events
   gamedata/     dungeon-door table per expansion, used when no world database is configured
   app.py        run reconstruction (map choice, track, markers)
   server.py     HTTP API, token login, static files

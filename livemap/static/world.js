@@ -13,9 +13,94 @@ const INTENT_COLORS = { quest: '#ffd200', 'trainer class': '#a29bfe', 'trainer t
   Grind: '#ff6b6b', pvp: '#ff3f34', city: '#fab1a0', GenericRpg: '#fd79a8' };
 const DEFAULT_LAYERS = { dungeons: true, tests: false, steep: false, swim: false, bots: true, names: false, zones: true, labels: true, events: true, intents: false, npcs: false, objects: false, nodes: false, walkpaths: false, flightpaths: false, transportpaths: false, portalpaths: false, transports: false, tele: false, zonelv: false };
 const GO_COLORS = { chest: '#feca57', questgiver: '#ffd200', mailbox: '#c8d6e5', meetingstone: '#a29bfe', fishinghole: '#48dbfb', door: '#576574', generic: '#8395a7' };
-const EVENT_STYLE = { death: ['#e6463c', 'died'], levelup: ['#ffd200', 'level up'], quest: ['#3cdc5a', 'quest'], pvp: ['#ff6b6b', 'pvp'],
-  trade: ['#1dd1a1', 'trade'], gear: ['#a29bfe', 'gear'], revive: ['#a0f0ff', 'revived'], kill: ['#ff9f43', 'kill'], group: ['#48dbfb', 'group'],
-  guild: ['#c8d6e5', 'guild'], travel: ['#feca57', 'hearth'], trainer: ['#48dbfb', 'trainer'], loot: ['#8395a7', 'loot'], other: ['#8395a7', 'other'] };
+const EVENT_TYPES = [
+  ['death', 'deaths', '#e6463c', true], ['levelup', 'level ups', '#ffd200', true],
+  ['quest_accept', 'quest accepted', '#3cdc5a', true], ['quest_turnin', 'quest completed', '#24d3a0', true],
+  ['quest_progress', 'quest progress', '#48dbfb', true], ['quest_fail', 'quest failed', '#ff5252', true],
+  ['quest_item', 'quest item used', '#a29bfe', true], ['revive', 'revives', '#a0f0ff', true],
+  ['auction', 'auctions', '#feca57', true], ['trade', 'vendor trade', '#1dd1a1', true],
+  ['loot', 'loot', '#c8d6e5', true], ['gear', 'gear', '#ff9ff3', true],
+  ['trainer', 'trainers', '#7bb1ff', true], ['talents', 'talents', '#9be15d', true],
+  ['group', 'groups', '#5ec8f5', true], ['guild', 'guild', '#ffb86b', true],
+  ['travel', 'hearth', '#ffe066', true], ['pvp', 'pvp', '#ff6b6b', true],
+  ['kill', 'kills', '#ff9f43', false], ['combat', 'combat', '#e17055', false],
+  ['mount', 'mount checks', '#b2bec3', false], ['other', 'other', '#8395a7', false]];
+const EVENT_TYPE = Object.fromEntries(EVENT_TYPES.map(([kind, chip, color, on]) => [kind, { kind, chip, color, on }]));
+const EVENT_COLOR = Object.fromEntries(EVENT_TYPES.map(([kind, , color]) => [kind, color]));
+const EVENT_GLYPH = {
+  death: c => `<circle cx="10" cy="8.4" r="3.6" fill="${c}"/><path d="M7.2 11.4h5.6l-.6 3.4H7.8z" fill="${c}"/>`
+    + '<circle cx="8.6" cy="8.4" r="1" fill="#10161f"/><circle cx="11.4" cy="8.4" r="1" fill="#10161f"/>',
+  levelup: c => `<path d="M10 4.4l5.2 4.9h-3.1v5.6H7.9V9.3H4.8z" fill="${c}"/>`,
+  quest_accept: c => `<rect x="6" y="4.8" width="8" height="10.4" rx="1.4" fill="${c}"/>`
+    + '<path d="M10 7.2v4.1" stroke="#10161f" stroke-width="1.7" stroke-linecap="round"/><circle cx="10" cy="13.1" r="0.95" fill="#10161f"/>',
+  quest_turnin: c => `<rect x="6" y="4.8" width="8" height="10.4" rx="1.4" fill="${c}"/>`
+    + '<path d="M7.8 10.4l1.9 2 3.2-3.6" fill="none" stroke="#10161f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  quest_progress: c => `<path d="M5 6.4h10M5 10h10M5 13.6h6" stroke="${c}" stroke-width="1.8" stroke-linecap="round"/>`,
+  quest_fail: c => `<rect x="6" y="4.8" width="8" height="10.4" rx="1.4" fill="${c}"/>`
+    + '<path d="M8.2 8.4l3.6 3.6M11.8 8.4l-3.6 3.6" stroke="#10161f" stroke-width="1.7" stroke-linecap="round"/>',
+  quest_item: c => `<path d="M8.4 4.6h3.2v2.4l2.2 4a2.9 2.9 0 0 1-2.5 4.4H8.7a2.9 2.9 0 0 1-2.5-4.4l2.2-4z" fill="${c}"/>`,
+  revive: c => `<path d="M9 3.6h2v4.4h3.2v2H11v6.4H9V10H5.8v-2H9z" fill="${c}"/>`,
+  auction: c => `<path d="M4.8 15.2l5.4-5.4" stroke="${c}" stroke-width="1.8" stroke-linecap="round"/>`
+    + `<rect x="10.2" y="4" width="5.6" height="3.6" rx="1.1" fill="${c}" transform="rotate(45 13 5.8)"/>`,
+  trade: c => `<circle cx="8" cy="9.4" r="3.1" fill="${c}"/><circle cx="12.2" cy="11.8" r="3.1" fill="${c}" opacity=".8"/>`,
+  loot: c => `<path d="M6.2 7.4h7.6l1.3 7.8H4.9z" fill="${c}"/><path d="M8 7.4a2 2 0 0 1 4 0" fill="none" stroke="${c}" stroke-width="1.5"/>`,
+  gear: c => `<path d="M13.4 3.8l2.8 2.8-7.6 7.6-2.8-2.8z" fill="${c}"/><path d="M5.2 12.4l2.4 2.4-1.6 1.6-2.4-2.4z" fill="${c}"/>`,
+  trainer: c => `<path d="M4.8 5h4.4v10H4.8z" fill="${c}"/><path d="M10.8 5h4.4v10h-4.4z" fill="${c}" opacity=".75"/>`,
+  talents: c => `<path d="M10 6.6v6.8M10 10.4L6.4 12.6M10 10.4l3.6 2.2" stroke="${c}" stroke-width="1.4" fill="none"/>`
+    + `<circle cx="10" cy="5.6" r="1.9" fill="${c}"/><circle cx="6" cy="13.2" r="1.5" fill="${c}"/><circle cx="14" cy="13.2" r="1.5" fill="${c}"/>`,
+  group: c => `<circle cx="7.4" cy="7.2" r="2.2" fill="${c}"/><path d="M4.4 15.6c0-2.4 1.4-3.9 3-3.9s3 1.5 3 3.9z" fill="${c}"/>`
+    + `<circle cx="13" cy="7.8" r="1.8" fill="${c}" opacity=".75"/><path d="M11.2 15.6c0-2 1-3.2 2.1-3.2 1.2 0 2.1 1.2 2.1 3.2z" fill="${c}" opacity=".75"/>`,
+  guild: c => `<path d="M10 4.2l4.8 1.9v4c0 2.9-2.1 4.6-4.8 5.7-2.7-1.1-4.8-2.8-4.8-5.7v-4z" fill="${c}"/>`,
+  travel: c => `<circle cx="10" cy="10" r="4.8" fill="${c}" opacity=".35"/><path d="M10 5.6l3.5 4.4L10 14.4 6.5 10z" fill="${c}"/>`,
+  pvp: c => `<path d="M6.8 4.2v11.6" stroke="${c}" stroke-width="1.8" stroke-linecap="round"/><path d="M7.8 5h7l-1.6 2.8 1.6 2.8h-7z" fill="${c}"/>`,
+  kill: c => `<path d="M10 3.8l1.7 2.4v5.4l-1.7 3.4-1.7-3.4V6.2z" fill="${c}"/><path d="M7.2 11.8h5.6" stroke="${c}" stroke-width="1.6" stroke-linecap="round"/>`,
+  combat: c => `<path d="M4.6 15.4l8.8-8.8M15.4 15.4L6.6 6.6" stroke="${c}" stroke-width="1.9" stroke-linecap="round"/>`
+    + `<path d="M11.4 4.2h4.4v4.4" fill="none" stroke="${c}" stroke-width="1.5"/>`,
+  mount: c => `<path d="M6 15.6V9.6a4 4 0 0 1 8 0v6h-2.2V9.6a1.8 1.8 0 0 0-3.6 0v6z" fill="${c}"/>`,
+  other: c => `<path d="M7.6 7.4a2.4 2.4 0 1 1 3.2 2.3c-.9.4-1.3 1-1.3 2" fill="none" stroke="${c}" stroke-width="1.7" stroke-linecap="round"/>`
+    + `<circle cx="9.9" cy="14.2" r="1.05" fill="${c}"/>`,
+};
+
+function eventSprite() {
+  if (!document.getElementById('evsprite')) {
+    const symbols = EVENT_TYPES.map(([kind]) => `<symbol id="ev-${kind}" viewBox="0 0 20 20">`
+      + '<rect x=".5" y=".5" width="19" height="19" rx="4.5" fill="#10161f" stroke="#c9a227" stroke-width="1"/>'
+      + EVENT_GLYPH[kind](EVENT_COLOR[kind]) + '</symbol>').join('');
+    document.body.insertAdjacentHTML('afterbegin',
+      `<svg id="evsprite" class="evsprite" aria-hidden="true" width="0" height="0">${symbols}</svg>`);
+  }
+}
+
+function eventIcon(kind, cls) {
+  const size = cls && cls.includes('sm') ? '15px' : '18px';
+  return EVENT_GLYPH[kind]
+    ? `<svg class="evicon${cls ? ' ' + cls : ''}" width="${size}" height="${size}" viewBox="0 0 20 20"><use href="#ev-${kind}"/></svg>`
+    : `<span class="evdot${cls ? ' ' + cls : ''}" style="background:${EVENT_COLOR.other}"></span>`;
+}
+
+function eventMarker(kind) {
+  return L.divIcon({ className: 'evmark', html: eventIcon(kind), iconSize: [18, 18] });
+}
+
+function eventLevel(e) {
+  return (e.kind === 'death' || e.kind === 'levelup') && e.level ? ' ' + e.level : '';
+}
+
+function eventTip(e) {
+  return `${e.t.slice(11, 16)}${e.bot ? ' ' + e.bot : ''} ${e.label || e.kind}${eventLevel(e)}${e.detail ? ' \u00b7 ' + e.detail : ''}`;
+}
+
+function eventOn(kind) {
+  return W.on[kind] !== false;
+}
+
+function eventKinds() {
+  return W.on.events ? EVENT_TYPES.filter(([kind]) => eventOn(kind)).map(([kind]) => kind) : [];
+}
+
+function eventDefaults() {
+  return Object.fromEntries(EVENT_TYPES.map(([kind, , , on]) => [kind, on]));
+}
 const COLOR_MODES = [['faction', 'faction'], ['class', 'class'], ['level', 'level'], ['state', 'state'], ['hp', 'health']];
 const FILTERS = [['all', 'everyone'], ['players', 'players + their bots'], ['combat', 'in combat'], ['dead', 'dead'], ['group', 'grouped'], ['test', 'running a test'], ['idle', 'inactive']];
 const MAX_LEVEL = { vanilla: 60, tbc: 70, wotlk: 80 };
@@ -39,7 +124,8 @@ const W = {
   snap: null, npcColor: store('wnpccolor') || 'role', pathColor: store('wpathcolor') || 'type', color: store('wcolor') || 'faction', filter: store('wfilter') || 'all', layers: null, trail: null, fitted: false,
   place: null, ov: null, inst: [], honest: false, plain: false, top: {}, counts: {}, scene: false, focus: null, cont: {}, base0: [0, 0],
   art: store('wart') === 'minimap' ? 'minimap' : 'painted',
-  on: { ...DEFAULT_LAYERS, ...(JSON.parse(store('wlayers') || 'null') || {}) },
+  cardSec: Math.min(120, Math.max(5, Math.round((+(store('wcardsec') || 15)) / 5) * 5)),
+  on: { ...DEFAULT_LAYERS, ...eventDefaults(), ...(JSON.parse(store('wlayers') || 'null') || {}) },
 };
 
 function worldScene() { return W.scene; }
@@ -138,10 +224,69 @@ async function wapi(path, opts) {
   return data;
 }
 
+function busyHold(key, label, hint) {
+  if (!W.busy) W.busy = {};
+  if (!W.busySince) W.busySince = {};
+  const held = W.busy[key];
+  const since = held ? held.since : (W.busySince[key] && Date.now() - W.busySince[key] < 1500 ? W.busySince[key] : Date.now());
+  W.busy[key] = { label, hint, since, n: held ? held.n + 1 : 1 };
+  paintBusy();
+}
+
+function busyRelease(key) {
+  const held = W.busy && W.busy[key];
+  if (!held) return;
+  if (held.n > 1) { held.n -= 1; return; }
+  if (!W.busySince) W.busySince = {};
+  W.busySince[key] = held.since;
+  delete W.busy[key];
+  paintBusy();
+}
+
+function paintBusy() {
+  const box = W.ui && W.ui.busy;
+  if (!box) return;
+  const items = Object.values(W.busy || {});
+  if (!items.length) {
+    clearInterval(W.busyTick); clearTimeout(W.busyDelay);
+    W.busyTick = W.busyDelay = null;
+    if (W.busyShown && !W.busyHide) W.busyHide = setTimeout(() => { W.busyHide = null; W.busyShown = false; box.classList.add('hidden'); }, 900);
+    return;
+  }
+  clearTimeout(W.busyHide); W.busyHide = null;
+  if (!W.busyShown) {
+    if (!W.busyDelay) W.busyDelay = setTimeout(() => { W.busyDelay = null; W.busyShown = true; paintBusy(); }, 500);
+    return;
+  }
+  const oldest = items.reduce((a, b) => (b.since < a.since ? b : a));
+  const secs = Math.max(0, Math.round((Date.now() - oldest.since) / 1000));
+  const slow = secs >= 6 && !!oldest.hint;
+  box.classList.remove('hidden');
+  box.classList.toggle('slow', slow);
+  W.ui.busyText.textContent = [...new Set(items.map(i => i.label))].join(' · ');
+  W.ui.busyTime.textContent = secs + ' s';
+  W.ui.busyHint.textContent = slow ? oldest.hint : '';
+  W.ui.busyHint.classList.toggle('hidden', !slow);
+  if (!W.busyTick) W.busyTick = setInterval(paintBusy, 1000);
+}
+
+function syncFab() {
+  if (!W.ui || !W.ui.fab) return;
+  const sheet = W.ui.sheet;
+  const open = !!sheet && !sheet.classList.contains('hidden');
+  const wide = window.matchMedia('(min-width: 900px)').matches;
+  W.ui.fab.classList.remove('hidden');
+  W.ui.fab.style.bottom = open && !wide ? (sheet.offsetHeight + 16) + 'px' : '';
+}
+
 function stopWorld() {
   W.gen = (W.gen || 0) + 1;
   clearInterval(W.timer); clearInterval(W.slowTimer);
   clearTimeout(W.nodeTimer);
+  clearTimeout(W.busyDelay); clearTimeout(W.busyHide); clearInterval(W.busyTick); clearInterval(W.waitTick);
+  W.busy = {}; W.busySince = {}; W.busyShown = false;
+  W.busyDelay = W.busyHide = W.busyTick = W.waitTick = null;
+  if (W.sheetObs) { W.sheetObs.disconnect(); W.sheetObs = null; }
   W.timer = W.slowTimer = null;
   W.markers.clear(); W.selected = null; W.trail = null; W.layers = null; W.fitted = false; W.viewApplied = false;
   W.zoneLabels = null; W.zoneLevels = null; W.place = null; W.ov = null; W.inst = []; W.top = {}; W.counts = {};
@@ -202,13 +347,22 @@ function boundsParams() {
 }
 
 async function worldPage(core, mapId) {
+  eventSprite();
   stopWorld();
   const lp = new URLSearchParams(location.search).get('layers');
   if (lp !== null) { const want = new Set(lp.split(',')); for (const k of Object.keys(W.on)) W.on[k] = want.has(k); }
   document.body.classList.add('worldmode');
   view.textContent = '';
-  const waiting = el('div', { class: 'notice wloading' }, 'Preparing the map. The very first start builds the map art from your game client and can take a few minutes; later starts are quick.');
+  const waiting = el('div', { class: 'notice wloading' }, el('span', { class: 'wspin' }),
+    el('span', {}, ' Preparing the map. The very first start builds the map art from your game client and can take a few minutes; later starts are quick. '),
+    el('span', { class: 'wsec' }));
   view.append(waiting);
+  const waitFrom = Date.now();
+  W.waitTick = setInterval(() => {
+    const s = Math.round((Date.now() - waitFrom) / 1000);
+    const sec = waiting.querySelector('.wsec');
+    if (sec) sec.textContent = s > 2 ? `(${s} s)` : '';
+  }, 1000);
   const first = await wapi('live' + (core ? '?core=' + encodeURIComponent(core) : ''));
   W.core = first.core;
   try { applyCaps(await wapi(`capabilities?core=${encodeURIComponent(W.core)}`)); } catch (e) { applyCaps(null); }
@@ -270,9 +424,20 @@ async function worldPage(core, mapId) {
     PATH_MODES.map(([v, l]) => el('option', { value: v, selected: v === W.pathColor ? 'selected' : null }, l)));
   const styleRow = el('div', { class: 'wdrow' }, npcSelect, pathSelect);
   const status = el('div', { class: 'wstatus' });
+  const busyText = el('span', { class: 'wbusytxt' });
+  const busyTime = el('span', { class: 'wbusytime' });
+  const busyHint = el('div', { class: 'wbusyhint hidden' });
+  const busy = el('div', { class: 'wbusy hidden' }, el('div', { class: 'wbusyrow' }, el('span', { class: 'wspin' }), busyText, busyTime), busyHint);
   const legendBox = el('div', { class: 'legend wlegend' });
   const mapDiv = el('div', { id: 'wmap' });
   const sheet = el('div', { class: 'sheet hidden' });
+  sheet.addEventListener('pointerdown', () => { W.cardDown = true; });
+  if (window.ResizeObserver) { W.sheetObs = new ResizeObserver(() => syncFab()); W.sheetObs.observe(sheet); }
+  if (!W.cardListeners) {
+    W.cardListeners = true;
+    for (const ev of ['pointerup', 'pointercancel']) document.addEventListener(ev, () => { W.cardDown = false; });
+    window.addEventListener('resize', () => syncFab());
+  }
   const terrainTag = el('div', { class: 'wterrain hidden' });
   const terrainRow = null;
   const styleBox = el('div', {});
@@ -294,7 +459,9 @@ async function worldPage(core, mapId) {
     drawerBody);
   const backdrop = el('div', { class: 'wdrawer-backdrop hidden', onclick: () => setDrawer(false) });
   waiting.remove();
-  add(el('div', { class: 'wmapwrap' }, mapDiv, status, terrainTag, sheet, backdrop, drawer,
+  clearInterval(W.waitTick);
+  W.waitTick = null;
+  add(el('div', { class: 'wmapwrap' }, mapDiv, status, busy, terrainTag, sheet, backdrop, drawer,
     el('div', { class: 'wfab' }, layersBtn)));
   if (worldScene()) {
     const placeSelect = el('select', { class: 'wsel', onchange: e => {
@@ -309,10 +476,12 @@ async function worldPage(core, mapId) {
     sceneBlock.append(el('div', { class: 'wdtitle' }, 'Dungeons on the map'), placeSelect, el('div', { class: 'chips' }, W.honestChip, W.turnChip, W.plainChip));
   }
   W.ui = { mapSelect, chips, status, legendBox, sheet, styleRow, npcSelect, pathSelect, terrainTag, terrainRow,
-    drawer, backdrop, badge, ground, styleBox, sceneBlock, layersBtn, fab: document.querySelector('.wfab') };
+    drawer, backdrop, badge, ground, styleBox, sceneBlock, layersBtn, busy, busyText, busyTime, busyHint, fab: document.querySelector('.wfab') };
   styleVisibility();
+  paintBusy();
 
-  mapObj = L.map(mapDiv, { crs: LM_CRS, minZoom: -7, maxZoom: 4, zoomSnap: 0.25, attributionControl: false, preferCanvas: true });
+  W.renderer = L.canvas({ padding: 0.3 });
+  mapObj = L.map(mapDiv, { crs: LM_CRS, minZoom: -7, maxZoom: 4, zoomSnap: 0.25, attributionControl: false, preferCanvas: true, renderer: W.renderer });
   mapObj.createPane('baseimg');
   mapObj.getPane('baseimg').style.zIndex = 340;
   mapObj.createPane('zoneimg');
@@ -330,7 +499,6 @@ async function worldPage(core, mapId) {
     base: L.layerGroup().addTo(mapObj), zones: L.layerGroup(), labels: L.layerGroup(), bots: L.layerGroup(),
     npcs: L.layerGroup(), objects: L.layerGroup(), nodes: L.layerGroup(), events: L.layerGroup(), tests: L.layerGroup(), tele: L.layerGroup(), intents: L.layerGroup(), zonelv: L.layerGroup(), transports: L.layerGroup(), sel: L.layerGroup().addTo(mapObj),
   };
-  W.renderer = L.canvas({ padding: 0.3 });
   drawBase();
   W.terrain = mountTerrain(mapObj, W.core, W.map, terrainInfo(),
     () => (terrainInfo().wmo && terrainInfo().extent ? imgBounds(terrainInfo().extent) : W.base && W.base.bounds ? imgBounds(W.base.bounds) : null),
@@ -338,8 +506,9 @@ async function worldPage(core, mapId) {
       onInfo: fresh => { if (W.info) W.info.terrain_render = fresh; drawBase(); renderStyle(); syncOverlays(); } });
   renderStyle();
   let nodesChip = null;
+  let eventsChip = null;
   const pathChips = [];
-  for (const [key, label] of [['bots', 'bots'], ['names', 'names'], ['labels', worldScene() ? 'zone + map names' : 'zone names'], ['zonelv', 'zone levels'], ['events', 'deaths / quests / levels'],
+  for (const [key, label] of [['bots', 'bots'], ['names', 'names'], ['labels', worldScene() ? 'zone + map names' : 'zone names'], ['zonelv', 'zone levels'], ['events', 'events'],
     ['intents', 'travel intent'], ['tests', 'tests run here'], ['steep', 'too steep to walk'], ['swim', 'swimming water'], ['npcs', 'NPCs'], ['objects', 'objects'], ['nodes', 'travel nodes'], ['transports', 'live transports'], ['tele', 'teleport cache']]) {
     if (W.hidden.has(key)) continue;
     const info = W.caps && W.caps.layers ? W.caps.layers[key] : null;
@@ -353,6 +522,7 @@ async function worldPage(core, mapId) {
     };
     chips.append(chip);
     if (key === 'nodes') nodesChip = chip;
+    if (key === 'events') eventsChip = chip;
   }
   if (nodesChip) {
     let last = nodesChip;
@@ -369,13 +539,31 @@ async function worldPage(core, mapId) {
     }
     W.pathChips = pathChips;
   }
+  if (eventsChip) {
+    const evRow = el('div', { class: 'chips evchips' });
+    eventsChip.after(evRow);
+    const evChips = [];
+    for (const [kind, chipLabel, color] of EVENT_TYPES) {
+      const chip = el('span', { class: 'chip sub' + (W.on[kind] !== false ? ' on' : ''), title: 'show ' + chipLabel + ' on the map' },
+        el('span', { class: 'evdot', style: `background:${color}` }), chipLabel);
+      chip.onclick = () => {
+        W.on[kind] = W.on[kind] === false;
+        chip.classList.toggle('on', W.on[kind]); wSaveLayers();
+        applyLayer(kind);
+        updateLayerBadge();
+      };
+      evRow.append(chip); evChips.push(chip);
+    }
+    W.evRow = evRow;
+    W.evChips = evChips;
+  }
   if (W.hidden.size && LM.mode !== 'static') {
     const first = [...W.hidden].find(k => k !== 'tests') || [...W.hidden][0];
     chips.after(el('div', { class: 'wdmore' }, el('a', { href: `/help#layer-${W.core}-${first}`, 'data-link': 1 },
       `${W.hidden.size} more layer${W.hidden.size === 1 ? '' : 's'} available here — how?`)));
   }
   updateLayerBadge();
-  for (const key of Object.keys(W.on)) applyLayer(key);
+  for (const key of Object.keys(W.on)) if (!EVENT_TYPE[key]) applyLayer(key);
   mapObj.on('moveend', debounce(() => { refreshViewportLayers(); updateZones(); updateNames(); updateZoneLevelLabels(); updateLod(); updateClusterChips(); saveView(); }, 400));
   mapObj.on('zoomend', debounce(() => { updateLod(); updateClusterChips(); if (W.terrain) W.terrain.sync(); syncSceneGround(); syncOverlays(); if (W.on.transports) loadTransports(); }, 150));
   mapObj.on('click', () => { closeSheet(); setDrawer(false); });
@@ -398,7 +586,7 @@ function setDrawer(open) {
 
 function updateLayerBadge() {
   if (!W.ui || !W.ui.badge) return;
-  const active = Object.keys(W.on).filter(k => W.on[k] && optionApplies(k)).length;
+  const active = Object.keys(W.on).filter(k => W.on[k] && !EVENT_TYPE[k] && optionApplies(k)).length;
   W.ui.badge.textContent = String(active);
 }
 
@@ -596,6 +784,16 @@ function terrainLayerFor(info, core, mapId, prefs, bounds, map) {
     noWrap: true, keepBuffer: 2, pane: 'terrain', updateWhenIdle: false,
     bounds: bounds || undefined,
   });
+  let pending = 0;
+  let held = false;
+  const settle = step => {
+    pending = Math.max(0, pending + step);
+    if (pending && !held) { held = true; busyHold('terrain', 'drawing the ground', 'the first look at an area is drawn from your game client, then it is instant'); }
+    else if (!pending && held) { held = false; busyRelease('terrain'); }
+  };
+  layer.on('tileloadstart', () => settle(1));
+  layer.on('tileload tileerror tileabort', () => settle(-1));
+  layer.on('load remove', () => { pending = 0; if (held) { held = false; busyRelease('terrain'); } });
   layer.lmKey = terrainKey(prefs);
   return layer;
 }
@@ -733,6 +931,16 @@ function pickBase() {
 
 function imgBounds(b) { return L.latLngBounds(ll(b.bottom, b.left), ll(b.top, b.right)); }
 
+function trackedImage(url, bounds, opts, label) {
+  const img = L.imageOverlay(url, bounds, opts);
+  const key = 'img:' + url;
+  let settled = false;
+  img.on('add', () => { if (!settled) busyHold(key, label || 'drawing map art', IMG_HINT); });
+  img.on('load error', () => { settled = true; busyRelease(key); });
+  img.on('remove', () => { if (!settled) { settled = true; busyRelease(key); } });
+  return img;
+}
+
 function drawScene() {
   const all = [];
   W.inst = [];
@@ -743,11 +951,11 @@ function drawScene() {
     if (m.continent || !m.extent) {
       const painted = m.continent && W.art !== 'minimap' ? paintedContinent(m.id) : null;
       if (painted) {
-        const art = L.imageOverlay(asset(`/basemap/${W.core}/${painted.key}.webp`), offBox(m.id, painted.bounds), { pane: 'baseimg' });
+        const art = trackedImage(asset(`/basemap/${W.core}/${painted.key}.webp`), offBox(m.id, painted.bounds), { pane: 'baseimg' });
         if (allWorld()) art.on('add', () => maskToLand(art, painted.bounds, m.base));
         art.addTo(W.layers.base);
       }
-      else if (m.base) L.imageOverlay(asset(`/basemap/${W.core}/${m.base.key}.webp`), box, { pane: 'baseimg' }).addTo(W.layers.base);
+      else if (m.base) trackedImage(asset(`/basemap/${W.core}/${m.base.key}.webp`), box, { pane: 'baseimg' }).addTo(W.layers.base);
       continue;
     }
     const inst = { m, b, box, pin: null };
@@ -760,8 +968,8 @@ function drawScene() {
     const open = ev => { L.DomEvent.stop(ev); go(`/w/${W.core}/${m.id}`); };
     const model = m.model && W.art === 'minimap' && terrainPrefs().detailed ? m.model : null;
     const turn = turnParam(m.id);
-    if (model) inst.img = L.imageOverlay(asset(`/basemap/${W.core}/${model.key}.webp?v=${model.v}${turn ? '&' + turn : ''}`), offBox(m.id, model.bounds), { pane: 'instimg', interactive: true }).on('click', open).addTo(W.layers.base);
-    else if (m.base) inst.img = L.imageOverlay(asset(`/basemap/${W.core}/${m.base.key}.webp${turn ? '?' + turn : ''}`), turn ? offBox(m.id, m.base.bounds) : box, { pane: 'instimg', interactive: true }).on('click', open).addTo(W.layers.base);
+    if (model) inst.img = trackedImage(asset(`/basemap/${W.core}/${model.key}.webp?v=${model.v}${turn ? '&' + turn : ''}`), offBox(m.id, model.bounds), { pane: 'instimg', interactive: true }).on('click', open).addTo(W.layers.base);
+    else if (m.base) inst.img = trackedImage(asset(`/basemap/${W.core}/${m.base.key}.webp${turn ? '?' + turn : ''}`), turn ? offBox(m.id, m.base.bounds) : box, { pane: 'instimg', interactive: true }).on('click', open).addTo(W.layers.base);
     else inst.plain = L.rectangle(box, { color: '#576574', weight: 1, fill: false, interactive: true }).on('click', open).addTo(W.layers.base);
     W.inst.push(inst);
   }
@@ -903,7 +1111,7 @@ function drawBase() {
   if (!base) base = wmo || terrain;
   W.base = base;
   if (base) {
-    if (!geometry) L.imageOverlay(asset(`/basemap/${W.core}/${base.key}.webp`), imgBounds(base.bounds), { pane: 'baseimg' }).addTo(W.layers.base);
+    if (!geometry) trackedImage(asset(`/basemap/${W.core}/${base.key}.webp`), imgBounds(base.bounds), { pane: 'baseimg' }, 'drawing this area').addTo(W.layers.base);
     if (!W.fitted) { mapObj.fitBounds(imgBounds(base.bounds)); W.fitted = true; }
   } else if (!W.fitted && W.info.extent) { mapObj.fitBounds(imgBounds(W.info.extent)); W.fitted = true; }
   else if (!W.fitted) mapObj.setView([0, 0], -3);
@@ -971,7 +1179,7 @@ function updateSceneZones() {
     if (!continent || !placeOf(+id) || px * Math.abs(continent.bounds.left - continent.bounds.right) <= 3600) continue;
     for (const z of info.basemaps.filter(b => b.kind === 'zone' && b.area).sort((a, b) => area(b.bounds) - area(a.bounds))) {
       const zb = offBox(+id, z.bounds);
-      if (view.intersects(zb)) L.imageOverlay(asset(`/basemap/${W.core}/${z.key}.webp`), zb, { pane: 'zoneimg' }).addTo(W.layers.zones);
+      if (view.intersects(zb)) trackedImage(asset(`/basemap/${W.core}/${z.key}.webp`), zb, { pane: 'zoneimg' }, 'drawing zone map tiles').addTo(W.layers.zones);
     }
   }
 }
@@ -990,7 +1198,7 @@ function updateZones() {
   if (W.on.zones && W.art !== 'minimap' && pxPerYard * cw > 3600) {
     for (const z of zones.slice().sort((a, b) => area(b.bounds) - area(a.bounds))) {
       const zb = imgBounds(z.bounds);
-      if (view.intersects(zb)) L.imageOverlay(asset(`/basemap/${W.core}/${z.key}.webp`), zb, { opacity: 1, pane: 'zoneimg' }).addTo(W.layers.zones);
+      if (view.intersects(zb)) trackedImage(asset(`/basemap/${W.core}/${z.key}.webp`), zb, { opacity: 1, pane: 'zoneimg' }, 'drawing zone map tiles').addTo(W.layers.zones);
     }
   }
   if (W.on.labels) {
@@ -1011,6 +1219,11 @@ function applyLayer(key) {
     nodes: W.layers.nodes, events: W.layers.events, tests: W.layers.tests, tele: W.layers.tele, intents: W.layers.intents, zonelv: W.layers.zonelv,
     transports: W.layers.transports }[key];
   styleVisibility();
+  if (EVENT_TYPE[key]) {
+    legend();
+    if (W.selected) refreshSelected(false); else loadEvents();
+    return;
+  }
   if (key === 'names') return updateNames();
   if (key === 'dungeons') return;
   if (key === 'steep' || key === 'swim') { syncOverlays(); legend(); return; }
@@ -1140,15 +1353,28 @@ function legend() {
   if (W.on.steep) box.append(item('rgba(255,170,40,0.7)', 'nearly too steep'), item('rgba(230,40,40,0.8)', 'too steep to walk'));
   if (W.on.swim) box.append(item('rgba(120,220,255,0.6)', 'wading'), item('rgba(20,90,255,0.8)', 'swimming'), item('#ff5000', 'lava'), item('#78d200', 'slime'));
   if (W.on.tests) for (const [k, c] of Object.entries(VERDICT_COLORS)) box.append(el('span', {}, el('span', { class: 'dot', style: `background:transparent;border:3px solid ${c}` }), 'test ' + k.toLowerCase()));
-  if (W.on.events) for (const k of ['death', 'levelup', 'quest']) box.append(el('span', {}, el('span', { class: 'dot sq', style: `background:${EVENT_STYLE[k][0]}` }), EVENT_STYLE[k][1]));
+  if (W.on.events) for (const [kind, chip] of EVENT_TYPES) if (eventOn(kind)) box.append(eventLegend(kind, chip));
   if (W.on.nodes) for (const [key, group, label] of TRAVEL_GROUPS) if (W.on[key]) box.append(item(TRAVEL_GROUP_COLORS[group], label));
   if (W.on.transports) box.append(el('span', {}, el('span', { class: 'dot', style: `background:${TRANSPORT_COLOR}` }), 'live transport'));
 }
 
 const VERDICT_COLORS = { PASS: '#3cdc5a', FAIL: '#ff3b3b', ABORT: '#ff9f43', IMPOSSIBLE: '#8395a7' };
 
+const LOAD_LABELS = { npcs: 'loading NPCs', objects: 'loading objects', nodes: 'loading travel paths', tele: 'loading teleport spots' };
+const DB_HINT = 'reading the world database — big views take a few seconds';
+const IMG_HINT = 'first look is slow, later looks are instant';
+
+async function withBusy(key, label, hint, work) {
+  busyHold(key, label, hint);
+  try { return await work(); } finally { busyRelease(key); }
+}
+
 async function loadTests() {
   if (!W.on.tests) return;
+  await withBusy('tests', 'loading tests', DB_HINT, () => loadTestsData());
+}
+
+async function loadTestsData() {
   const rows = await wapi(`tests/where?core=${W.core}&map=${apiMap()}`);
   const layer = W.layers.tests;
   layer.clearLayers();
@@ -1165,16 +1391,75 @@ async function loadTests() {
 }
 
 async function loadEvents() {
-  if (!W.on.events) return;
-  const rows = await wapi(`live/events?core=${W.core}&map=${apiMap()}&seconds=1800&kinds=death,levelup,quest,pvp`);
-  W.layers.events.clearLayers();
+  if (!W.layers) return;
+  await withBusy('events', 'loading events', DB_HINT, () => loadEventsData());
+}
+
+async function loadEventsData() {
+  const layer = W.layers.events;
+  const gen = W.evGen = (W.evGen || 0) + 1;
+  layer.clearLayers();
+  if (!W.on.events || W.selected) return;
+  const kinds = eventKinds();
+  if (!kinds.length) return;
+  const rows = await wapi(`live/events?core=${W.core}&map=${apiMap()}&seconds=1800&kinds=${kinds.join(',')}`);
+  if (gen !== W.evGen || !W.on.events || W.selected) return;
+  layer.clearLayers();
   for (const e of rows) {
-    const [c, label] = EVENT_STYLE[e.kind] || EVENT_STYLE.other;
     const pos = bpos(e.map === undefined ? W.map : e.map, e.x, e.y);
     if (!pos) continue;
-    L.circleMarker(pos, { radius: e.kind === 'death' ? 5 : 4, color: '#000', weight: 1, fillColor: c, fillOpacity: 0.8, renderer: W.renderer })
-      .bindTooltip(`${e.t.slice(11)} ${e.bot} ${label}${e.kind === 'levelup' ? ' ' + e.level : ''}${e.detail ? ' · ' + e.detail : ''}`).addTo(W.layers.events);
+    L.marker(pos, { icon: eventMarker(e.kind), keyboard: false }).bindTooltip(eventTip(e))
+      .on('click', ev => { if (!e.guid) return; L.DomEvent.stopPropagation(ev); selectBot(e.guid, false); })
+      .addTo(layer);
   }
+}
+
+function eventPos(e, card) {
+  if (!worldScene() && e.map !== undefined && e.map !== card.map) return null;
+  return bpos(e.map === undefined ? card.map : e.map, e.x, e.y);
+}
+
+function loadSelectedEvents(card) {
+  if (!W.layers || !W.selected || !card) return;
+  const kinds = new Set(EVENT_TYPES.filter(([kind]) => eventOn(kind)).map(([kind]) => kind));
+  for (const e of (card.events || []).slice().reverse()) {
+    if (!kinds.has(e.kind)) continue;
+    const pos = eventPos(e, card);
+    if (!pos) continue;
+    L.marker(pos, { icon: eventMarker(e.kind), keyboard: false }).bindTooltip(eventTip(e))
+      .on('click', ev => L.DomEvent.stopPropagation(ev))
+      .addTo(W.layers.sel);
+  }
+}
+
+function eventLegend(kind, chip) {
+  const box = el('span', { class: 'evleg' });
+  box.innerHTML = eventIcon(kind);
+  box.append(chip);
+  return box;
+}
+
+function eventKey(e) {
+  return `${e.t}|${e.event}|${e.x.toFixed(1)}|${e.y.toFixed(1)}`;
+}
+
+function eventRow(e, card) {
+  const mark = el('span', { class: 'evicn' });
+  mark.innerHTML = eventIcon(e.kind, 'sm');
+  const key = eventKey(e);
+  const row = el('div', { class: 'evrow' + (W.cardMark === key ? ' on' : '') }, mark,
+    el('span', { class: 'evwhen' }, e.t.slice(11, 16)),
+    el('span', { class: 'evwhat' }, `${e.label || e.kind}${eventLevel(e)}`),
+    e.detail ? el('span', { class: 'evdetail' }, e.detail) : null);
+  row.onclick = () => {
+    const pos = eventPos(e, card);
+    if (!pos) return;
+    mapObj.setView(pos, Math.max(mapObj.getZoom(), allWorld() ? -3 : -1));
+    W.cardMark = key;
+    for (const other of row.parentNode.children) other.classList.remove('on');
+    row.classList.add('on');
+  };
+  return row;
 }
 
 function styleVisibility() {
@@ -1183,6 +1468,7 @@ function styleVisibility() {
   W.ui.pathSelect.style.display = W.on.nodes ? '' : 'none';
   W.ui.styleRow.style.display = W.on.npcs || W.on.nodes ? '' : 'none';
   for (const chip of W.pathChips || []) chip.style.display = W.on.nodes ? '' : 'none';
+  if (W.evRow) W.evRow.style.display = W.on.events ? '' : 'none';
 }
 
 function activePathGroups() {
@@ -1344,6 +1630,11 @@ function updateZoneLevelLabels() {
 function refreshViewportLayers() { for (const k of ['npcs', 'objects', 'nodes', 'tele']) if (W.on[k]) loadViewportLayer(k); }
 
 async function loadIntents() {
+  if (!W.layers) return;
+  await withBusy('intents', 'loading travel intents', DB_HINT, () => loadIntentsData());
+}
+
+async function loadIntentsData() {
   const rows = await wapi(`live/intents?core=${W.core}&map=${apiMap()}&seconds=900`);
   const layer = W.layers.intents;
   layer.clearLayers();
@@ -1364,6 +1655,11 @@ async function loadIntents() {
 }
 
 async function loadViewportLayer(key) {
+  if (!W.layers) return;
+  await withBusy('layer:' + key, LOAD_LABELS[key] || 'loading', DB_HINT, () => loadViewportLayerData(key));
+}
+
+async function loadViewportLayerData(key) {
   const b = boundsParams();
   const kind = { npcs: 'creatures', objects: 'objects', nodes: 'nodes', tele: 'telecache' }[key];
   const q = new URLSearchParams({ core: W.core, map: apiMap(), kind, ...b });
@@ -1456,11 +1752,17 @@ async function loadViewportLayer(key) {
 }
 
 function closeSheet() {
-  W.selected = null; W.follow = false;
-  if (W.ui && W.ui.fab) W.ui.fab.classList.remove('hidden');
+  const was = W.selected;
+  W.selected = null; W.follow = false; W.card = null; W.cardMark = null;
   W.layers && W.layers.sel.clearLayers();
   W.ui.sheet.classList.add('hidden');
+  syncFab();
   const u = new URL(location.href); u.searchParams.delete('bot'); history.replaceState({}, '', u.pathname + u.search);
+  if (was && W.on.events) {
+    W.layers.events.addTo(mapObj);
+    loadEvents();
+    legend();
+  }
 }
 
 async function selectBot(guid, center) {
@@ -1472,16 +1774,18 @@ async function selectBot(guid, center) {
 async function refreshSelected(center) {
   const guid = W.selected;
   let card;
-  try { card = await wapi(`live/bot?core=${W.core}&guid=${guid}`); } catch (e) { W.ui.sheet.classList.remove('hidden'); W.ui.sheet.textContent = 'This bot is not online any more.'; return; }
+  try { card = await wapi(`live/bot?core=${W.core}&guid=${guid}&seconds=${(W.cardSec || 15) * 60}`); } catch (e) { W.selected = null; W.card = null; W.cardMark = null; W.ui.sheet.classList.remove('hidden'); W.ui.sheet.textContent = 'This bot is not online any more.'; syncFab(); return; }
   if (W.selected !== guid) return;
   if (worldScene() ? (W.focus !== null && !placeOf(card.map)) : card.map !== W.map) { go(`/w/${W.core}/${card.map}?bot=${guid}`); return; }
+  W.card = card;
   W.layers.sel.clearLayers();
+  if (W.on.events) mapObj.removeLayer(W.layers.events);
   const here = bpos(card.map, card.x, card.y);
   drawTrail(card);
-  if (here) L.circleMarker(here, { radius: 11, color: '#28c8ff', weight: 3, fill: false }).addTo(W.layers.sel);
+  loadSelectedEvents(card);
+  if (here) L.circleMarker(here, { radius: 11, color: '#28c8ff', weight: 3, fill: false, renderer: W.renderer, interactive: false }).addTo(W.layers.sel);
   if (here && (center || W.follow)) mapObj.setView(here, Math.max(mapObj.getZoom(), center ? (allWorld() ? -3 : -1) : mapObj.getZoom()));
-  if (W.ui.fab) W.ui.fab.classList.add('hidden');
-  renderCard(card);
+  if (!W.cardDown) renderCard(card);
 }
 
 function drawTrail(card) {
@@ -1493,11 +1797,11 @@ function drawTrail(card) {
     const pos = bpos(map, p[0], p[1]);
     if (pos) pts.push({ pos, map });
   }
-  const solid = pts => L.polyline(pts, { color: '#28c8ff', weight: 3, opacity: 0.85 }).addTo(W.layers.sel);
+  const solid = pts => L.polyline(pts, { color: '#28c8ff', weight: 3, opacity: 0.85, renderer: W.renderer, interactive: false }).addTo(W.layers.sel);
   let run = [];
   for (let i = 0; i < pts.length; i++) {
     if (i && pts[i].map !== pts[i - 1].map) {
-      if (worldScene()) L.polyline([pts[i - 1].pos, pts[i].pos], { color: '#28c8ff', weight: 2, opacity: 0.6, dashArray: '3 5' }).addTo(W.layers.sel);
+      if (worldScene()) L.polyline([pts[i - 1].pos, pts[i].pos], { color: '#28c8ff', weight: 2, opacity: 0.6, dashArray: '3 5', renderer: W.renderer, interactive: false }).addTo(W.layers.sel);
       if (run.length > 1) solid(run.map(p => p.pos));
       run = [];
     }
@@ -1513,11 +1817,14 @@ function money(c) { return `${Math.floor(c / 10000)}g ${Math.floor(c / 100) % 10
 function renderCard(c) {
   const s = W.ui.sheet;
   const open = s.querySelector('details') ? s.querySelector('details').open : false;
+  const top = s.scrollTop;
   s.textContent = '';
   s.classList.remove('hidden');
   const followBtn = el('button', { class: 'ghost', onclick: () => { W.follow = !W.follow; followBtn.textContent = W.follow ? 'following' : 'follow'; followBtn.classList.toggle('on', W.follow); } }, W.follow ? 'following' : 'follow');
   if (W.follow) followBtn.classList.add('on');
   const where = [c.zone_name, c.area_name && c.area_name !== c.zone_name ? c.area_name : null].filter(Boolean).join(' › ');
+  const secMin = Math.round((c.seconds || 900) / 60);
+  const routeTitle = m => `route${c.source === 'db' ? (c.trail_until ? ' (as of ' + c.trail_until.slice(5, 16) + ')' : ' (not recorded)') : ''} + events: last ${m} min`;
   s.append(...[
     el('div', { class: 'sheethead' },
       el('div', {}, el('div', { class: 'name' }, c.name, ' ', el('span', { class: 'badge' }, c.bot ? 'bot' : 'player')),
@@ -1528,6 +1835,12 @@ function renderCard(c) {
       ? el('div', { class: 'meta' }, el('span', { class: 'badge approxb' }, 'position at last save'), ` ${money(c.money)}${c.guild ? ' · <' + c.guild + '>' : ''} · moved ${ago(c.age)}`)
       : el('div', { class: 'meta' }, `${c.state} · hp ${c.hp}% · power ${c.power}% · ${money(c.money)}${c.leader_name ? ' · group leader ' + c.leader_name : ''} · seen ${c.age}s ago`),
     c.runs.length ? el('div', { class: 'meta' }, 'tests: ', ...c.runs.slice(0, 4).map(r => el('a', { href: `/r/${r.id}`, 'data-link': 1, style: 'margin-right:8px' }, verdict(r.verdict), ' ', prettyTest(r.test).slice(0, 40)))) : null,
-    el('details', { open: open ? 'open' : null }, el('summary', { class: 'meta' }, `last hour: ${c.events.length} events`),
-      el('div', { class: 'list' }, c.events.slice().reverse().map(e => el('div', { class: 'meta' }, `${e.t.slice(11)} ${e.event.replace(/Action$/, '')}${e.detail ? ' · ' + e.detail : ''}`))))].filter(Boolean));
+    el('div', { class: 'wdsec' }, el('div', { class: 'wdtitle' }, routeTitle(secMin)),
+      el('input', { type: 'range', min: 5, max: 120, step: 5, value: secMin, class: 'wheight',
+        oninput: e => { e.target.parentNode.firstChild.textContent = routeTitle(e.target.value); },
+        onchange: e => { W.cardSec = +e.target.value; store('wcardsec', e.target.value); refreshSelected(false); } })),
+    el('details', { open: open ? 'open' : null }, el('summary', { class: 'meta' }, `last ${secMin} min: ${c.events.length} events`),
+      el('div', { class: 'list evlist' }, c.events.slice().reverse().map(e => eventRow(e, c))))].filter(Boolean));
+  s.scrollTop = top;
+  syncFab();
 }

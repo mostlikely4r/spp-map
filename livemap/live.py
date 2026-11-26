@@ -10,8 +10,15 @@ POSITIONS = "bot_positions.csv"
 STALE_S = 90
 TRAIL_S = 900
 TRAIL_MAX = 600
+TRAIL_CACHE_S = 30
+TRAIL_CACHE_KEYS = 64
+TRAIL_BUCKET_S = 30
+TRAIL_LOG_MAX_S = 7200
 BACKFILL_S = 900
 POLL_MIN_S = 1.0
+
+_trail_log = collections.OrderedDict()
+_trail_log_lock = threading.Lock()
 
 COLS = ["guid", "name", "bot", "map", "inst", "x", "y", "z", "o", "zone", "area", "level", "hp", "power",
         "flags", "leader", "money", "race", "cls", "floor", "age"]
@@ -22,22 +29,61 @@ CLASSES = {1: "Warrior", 2: "Paladin", 3: "Hunter", 4: "Rogue", 5: "Priest", 6: 
            8: "Mage", 9: "Warlock", 11: "Druid"}
 HORDE = {2, 5, 6, 8, 10}
 
+EVENT_TYPES = [
+    ("death", "died"),
+    ("levelup", "level up"),
+    ("quest_accept", "accepted"),
+    ("quest_turnin", "completed"),
+    ("quest_progress", "progress"),
+    ("quest_fail", "failed"),
+    ("quest_item", "item used"),
+    ("revive", "revived"),
+    ("auction", "auction"),
+    ("trade", "vendor"),
+    ("loot", "loot"),
+    ("gear", "gear"),
+    ("trainer", "trainer"),
+    ("talents", "talents"),
+    ("group", "group"),
+    ("guild", "guild"),
+    ("travel", "hearth"),
+    ("pvp", "battleground"),
+    ("kill", "kill"),
+    ("combat", "combat"),
+    ("mount", "mount check"),
+    ("other", "other"),
+]
+EVENT_LABEL = {t[0]: t[1] for t in EVENT_TYPES}
+
 EVENT_KINDS = {
     "AutoReleaseSpiritAction": "death", "RepopAction": "death",
-    "ReviveFromSpiritHealerAction": "revive", "ReviveFromCorpseAction": "revive",
-    "AcceptQuestAction": "quest", "TalkToQuestGiverAction": "quest", "QuestUpdateCompleteAction": "quest",
-    "QuestUpdateAddKillAction": "quest", "QuestUpdateAddItemAction": "quest", "QuestUpdateFailedTimerAction": "quest",
-    "KillCreature": "kill", "AttackAnythingAction": "attack",
-    "SellAction": "trade", "BuyAction": "trade", "AhAction": "trade", "AhBidAction": "trade", "RepairAllAction": "trade",
-    "EquipAction": "gear", "StoreLootAction": "loot", "TrainerAction": "trainer", "AutoSetTalentsAction": "trainer",
-    "BGJoinAction": "pvp", "AcceptInvitationAction": "group", "LeaveGroupAction": "group",
+    "AcceptQuestAction": "quest_accept",
+    "TalkToQuestGiverAction": "quest_turnin",
+    "QuestUpdateAddKillAction": "quest_progress", "QuestUpdateAddItemAction": "quest_progress",
+    "QuestObjectiveCompletedAction": "quest_progress", "QuestUpdateCompleteAction": "quest_progress",
+    "QuestUpdateFailedTimerAction": "quest_fail",
+    "QueryItemUsageAction": "quest_item",
+    "ReviveFromCorpseAction": "revive", "ReviveFromSpiritHealerAction": "revive",
+    "AhAction": "auction", "AhBidAction": "auction",
+    "SellAction": "trade", "BuyAction": "trade", "RepairAllAction": "trade",
+    "StoreLootAction": "loot", "EquipAction": "gear", "TrainerAction": "trainer",
+    "AutoSetTalentsAction": "talents",
+    "AcceptInvitationAction": "group", "LeaveGroupAction": "group",
     "GuildAcceptAction": "guild", "GuildLeaveAction": "guild",
-    "UseHearthStoneAction": "travel", "CheckMountStateAction": "mount",
+    "UseHearthStoneAction": "travel",
+    "BGJoinAction": "pvp",
+    "KillCreature": "kill",
+    "AttackAnythingAction": "combat",
+    "CheckMountStateAction": "mount",
 }
 
 
 def event_kind(name):
     return EVENT_KINDS.get(name, "other")
+
+
+def event_label(kind):
+    return EVENT_LABEL.get(kind, kind)
 
 
 class CharDb:
@@ -71,6 +117,53 @@ class CharDb:
                 self.conn = None
                 self.failed_at = time.time()
         return {g: self.cache.get(g, (0, 0)) for g in guids}
+
+
+def downsample(points):
+    if len(points) <= TRAIL_MAX:
+        return list(points)
+    step = len(points) / TRAIL_MAX
+    picked = [points[int(i * step)] for i in range(TRAIL_MAX)]
+    picked[-1] = points[-1]
+    return picked
+
+
+def trail_from_log(path, guid, seconds, until_ts=None):
+    if not path:
+        return [], None
+    seconds = min(max(int(seconds or TRAIL_S), 60), TRAIL_LOG_MAX_S)
+    try:
+        end = datetime.strptime((until_ts or telemetry.last_ts(path) or "")[:19], telemetry.TS_FMT)
+    except ValueError:
+        return [], None
+    key = (path, guid, seconds, end.replace(second=(end.second // TRAIL_BUCKET_S) * TRAIL_BUCKET_S).strftime(telemetry.TS_FMT))
+    now = time.time()
+    with _trail_log_lock:
+        hit = _trail_log.get(key)
+        if hit and hit[0] > now:
+            _trail_log.move_to_end(key)
+            return hit[1], hit[2]
+    points = []
+    last = None
+    t0 = (end - timedelta(seconds=seconds)).strftime(telemetry.TS_FMT)
+    for line in telemetry.window_lines(path, t0, "9999-12-31 23:59:59", f",{guid},"):
+        f = telemetry.parse_csv(line)
+        if len(f) < 22:
+            continue
+        try:
+            if int(f[2]) != guid:
+                continue
+            points.append([round(float(f[7]), 1), round(float(f[8]), 1), int(f[19]), int(f[5])])
+        except ValueError:
+            continue
+        last = f[0][:19]
+    points = downsample(points)
+    with _trail_log_lock:
+        _trail_log[key] = (now + TRAIL_CACHE_S, points, last)
+        _trail_log.move_to_end(key)
+        while len(_trail_log) > TRAIL_CACHE_KEYS:
+            _trail_log.popitem(last=False)
+    return points, last
 
 
 class LiveFeed:
@@ -122,7 +215,7 @@ class LiveFeed:
                 return
             with open(self.path, "rb") as fh:
                 if self.offset == 0 and st.st_size > 4 * 1024 * 1024:
-                    target = self.last_ts(fh, st.st_size)
+                    target = telemetry.last_ts(self.path, tail=8192)
                     if target:
                         start = (datetime.strptime(target, telemetry.TS_FMT) - timedelta(seconds=BACKFILL_S)).strftime(telemetry.TS_FMT)
                         telemetry.seek_time(fh, st.st_size, start)
@@ -137,15 +230,6 @@ class LiveFeed:
             for raw in data[:end].split(b"\n"):
                 self.ingest(raw)
             self.expire()
-
-    @staticmethod
-    def last_ts(fh, size):
-        fh.seek(max(0, size - 8192))
-        lines = fh.read().split(b"\n")
-        for raw in reversed(lines):
-            if raw[:1].isdigit():
-                return raw[:19].decode("ascii", errors="replace")
-        return None
 
     def ingest(self, raw):
         if not raw[:1].isdigit():
@@ -218,14 +302,24 @@ class LiveFeed:
             "cols": COLS, "bots": out,
         }
 
-    def bot(self, guid):
+    def log_trail(self, guid, seconds, newest_ts):
+        return trail_from_log(self.path, guid, seconds, newest_ts)[0]
+
+    def bot(self, guid, seconds=None):
         self.poll()
         with self.lock:
             row = self.bots.get(guid)
             trail = list(self.trails.get(guid, ()))
             newest = self.newest
+            newest_ts = self.newest_ts
         if not row:
             return None
+        ring = [[t[2], t[3], t[4], t[1]] for t in trail]
+        if seconds and seconds > TRAIL_S:
+            trail_out = self.log_trail(guid, seconds, newest_ts) or ring
+        else:
+            cutoff = newest - (seconds or TRAIL_S)
+            trail_out = [[t[2], t[3], t[4], t[1]] for t in trail if not seconds or t[0] >= cutoff]
         race, cls = self.chars.lookup([guid]).get(guid, (0, 0))
         out = {k: v for k, v in row.items() if k != "wmo"}
         out.update({"race": race, "cls": cls, "race_name": RACES.get(race, ""), "class_name": CLASSES.get(cls, ""),
@@ -234,7 +328,8 @@ class LiveFeed:
                     "state": telemetry.flags_text(row["flags"])})
         leader = self.bots.get(row["leader"]) if row["leader"] else None
         out["leader_name"] = leader["name"] if leader else ("" if not row["leader"] else str(row["leader"]))
-        out["trail"] = [[t[2], t[3], t[4], t[1]] for t in trail]
+        out["trail"] = trail_out
+        out["seconds"] = seconds or TRAIL_S
         return out
 
     def find(self, text, limit=20):
@@ -249,11 +344,9 @@ class LiveFeed:
 
 def recent_events(logs, newest_ts, map_id, seconds=1800, name=None, kinds=None, limit=2000):
     path = os.path.join(logs, "bot_events.csv")
-    try:
-        with open(path, "rb") as fh:
-            newest_ts = LiveFeed.last_ts(fh, os.path.getsize(path)) or newest_ts
-    except OSError:
+    if not os.path.exists(path):
         return []
+    newest_ts = telemetry.last_ts(path, tail=8192) or newest_ts
     if not newest_ts:
         return []
     t0 = (datetime.strptime(newest_ts, telemetry.TS_FMT) - timedelta(seconds=seconds)).strftime(telemetry.TS_FMT)
@@ -274,14 +367,18 @@ def recent_events(logs, newest_ts, map_id, seconds=1800, name=None, kinds=None, 
         if f[2] == "XpGainAction":
             prev = last_level.get(f[1])
             last_level[f[1]] = level
-            if prev is not None and level > prev:
-                kind = "levelup"
+            kind = "levelup" if prev is not None and level > prev else "other"
         w = telemetry.world_of(f, 9)
         if not w or (map_id is not None and w[0] != map_id):
             continue
         if kinds and kind not in kinds:
             continue
-        out.append({"t": f[0][:19], "bot": f[1], "event": f[2], "kind": kind, "level": level, "map": w[0],
+        try:
+            guid = int(f[14])
+        except ValueError:
+            guid = 0
+        out.append({"t": f[0][:19], "bot": f[1], "guid": guid, "event": f[2], "kind": kind,
+                    "label": event_label(kind), "level": level, "map": w[0],
                     "detail": ", ".join(x for x in f[7:9] if x)[:120], "x": w[1], "y": w[2]})
     return out[-limit:]
 
@@ -306,6 +403,16 @@ class DbFeed:
         self.newest = 0
         self.newest_ts = None
         self.guilds = {}
+        self.log_path = os.path.join(core.logs, POSITIONS) if core.logs else ""
+        self.log_ts = None
+        self.log_at = 0.0
+
+    def log_anchor(self):
+        now = time.time()
+        if now - self.log_at > 60:
+            self.log_at = now
+            self.log_ts = telemetry.last_ts(self.log_path) if self.log_path else None
+        return self.log_ts
 
     @staticmethod
     def connect(info):
@@ -414,7 +521,7 @@ class DbFeed:
             "cols": COLS, "bots": out,
         }
 
-    def bot(self, guid):
+    def bot(self, guid, seconds=None):
         self.poll()
         with self.lock:
             row = self.bots.get(guid)
@@ -422,13 +529,16 @@ class DbFeed:
             newest = self.newest
         if not row:
             return None
+        points, until = trail_from_log(self.log_path, guid, seconds or TRAIL_S, self.log_anchor())
         race = row["race"]
         out = {k: v for k, v in row.items() if k != "moved"}
         out.update({"race_name": RACES.get(race, ""), "class_name": CLASSES.get(row["cls"], ""),
                     "faction": "Horde" if race in HORDE else ("Alliance" if race else ""), "age": newest - row["moved"],
                     "floor": None, "state": "position at last save", "source": "db", "leader_name": "",
                     "guild": self.guilds.get(guid, ""), "ts": self.newest_ts})
-        out["trail"] = [[t[2], t[3], t[4], t[1]] for t in trail]
+        out["trail"] = points or [[t[2], t[3], t[4], t[1]] for t in trail]
+        out["trail_until"] = until if points else None
+        out["seconds"] = seconds or TRAIL_S
         return out
 
     def find(self, text, limit=20):

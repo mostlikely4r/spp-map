@@ -254,7 +254,8 @@ class Handler(BaseHTTPRequestHandler):
             map_id = int(q["map"]) if q.get("map", "") not in ("", "world") else None
             return self.send_json(app.live_snapshot(core, map_id))
         if method == "GET" and name == "live/bot":
-            card = app.bot_card(q["core"], int(q["guid"]))
+            seconds = min(max(int(q.get("seconds", 900) or 900), 300), 7200)
+            card = app.bot_card(q["core"], int(q["guid"]), seconds)
             return self.send_json(card) if card else self.send_json({"error": "bot not online"}, 404)
         if method == "GET" and name == "live/find":
             return self.send_json(app.cores[q["core"]].live.find(q.get("q", "")))

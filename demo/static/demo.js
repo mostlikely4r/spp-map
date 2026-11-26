@@ -38,13 +38,14 @@ function demoSnapshot(live, frame, mapId) {
     maps: [...counts.values()].sort((a, b) => b.bots - a.bots), bots: rows, known: live.known };
 }
 
-async function demoCard(guid) {
-  const { live, i } = await demoFrame(0);
+async function demoCard(guid, seconds) {
+  const { live, i, frame: nowFrame } = await demoFrame(0);
   const ci = Object.fromEntries(live.cols.map((c, k) => [c, k]));
   const trail = [];
   let row = null;
   const n = live.frames.length;
-  for (let back = Math.min(n - 1, 120); back >= 0; back--) {
+  const span = Math.min(n - 1, Math.ceil((seconds || 900) / live.frame_s));
+  for (let back = span; back >= 0; back--) {
     const f = live.frames[((i - back) % n + n) % n];
     const r = f.bots.find(b => b[ci.guid] === guid);
     if (!r) continue;
@@ -54,10 +55,12 @@ async function demoCard(guid) {
   if (!row) throw new Error('This bot is not online any more.');
   const get = k => row[ci[k]];
   const race = get('race'), cls = get('cls'), flags = get('flags');
-  const events = (await demoFile('events.json').catch(() => [])).filter(e => e.bot === get('name')).slice(-40);
+  const from = Date.parse(nowFrame.ts.slice(0, 19).replace(' ', 'T') + 'Z') - (seconds || 900) * 1000;
+  const events = (await demoFile('events.json').catch(() => []))
+    .filter(e => e.bot === get('name') && Date.parse(e.t.replace(' ', 'T') + 'Z') >= from).slice(-400);
   const runs = (await demoFile('tests.json').catch(() => [])).filter(t => t.host === get('name'))
     .map(t => ({ id: t.id, test: t.test, verdict: t.verdict }));
-  return { guid, name: get('name'), bot: !!get('bot'), map: get('map'), x: get('x'), y: get('y'), z: get('z'), level: get('level'),
+  return { guid, seconds: seconds || 900, name: get('name'), bot: !!get('bot'), map: get('map'), x: get('x'), y: get('y'), z: get('z'), level: get('level'),
     hp: get('hp'), power: get('power'), money: get('money'), race, cls, race_name: DEMO_RACES[race] || '', class_name: DEMO_CLASSES[cls] || '',
     faction: race ? (DEMO_HORDE.has(race) ? 'Horde' : 'Alliance') : '', age: get('age'), floor: get('floor'),
     state: DEMO_FLAGS.filter(([b]) => flags & b).map(([, t]) => t).join(' ') || 'idle',
@@ -88,7 +91,7 @@ async function demoApi(path, opts) {
       const { live, frame } = await demoFrame(0);
       return demoSnapshot(live, frame, mapId);
     }
-    case 'live/bot': return demoCard(+q.guid);
+    case 'live/bot': return demoCard(+q.guid, +q.seconds || 900);
     case 'live/find': {
       const { live, frame } = await demoFrame(0);
       const ci = Object.fromEntries(live.cols.map((c, k) => [c, k]));
@@ -99,7 +102,10 @@ async function demoApi(path, opts) {
     case 'live/events': {
       const rows = await demoFile('events.json');
       const kinds = q.kinds ? new Set(q.kinds.split(',')) : null;
-      return rows.filter(e => (mapId === null || e.map === mapId) && (!kinds || kinds.has(e.kind)));
+      const { live, frame } = await demoFrame(0);
+      const from = Date.parse(frame.ts.slice(0, 19).replace(' ', 'T') + 'Z') - (+q.seconds || 1800) * 1000;
+      return rows.filter(e => (mapId === null || e.map === mapId) && (!kinds || kinds.has(e.kind))
+        && Date.parse(e.t.slice(0, 19).replace(' ', 'T') + 'Z') >= from);
     }
     case 'live/intents': return (await demoFile('intents.json')).filter(r => mapId === null || r.map === mapId);
     case 'live/transports': {

@@ -17,6 +17,25 @@ def ts_of(line):
     return line[:19]
 
 
+def last_ts(path, tail=65536):
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return None
+    if not size:
+        return None
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(max(0, size - tail))
+            lines = fh.read().split(b"\n")
+    except OSError:
+        return None
+    for raw in reversed(lines):
+        if len(raw) >= 19 and raw[:1].isdigit():
+            return raw[:19].decode("ascii", errors="replace")
+    return None
+
+
 def seek_time(fh, size, target):
     lo, hi = 0, size
     while hi - lo > 65536:

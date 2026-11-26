@@ -23,6 +23,7 @@ from .transportart import TransportArt
 from .worlddb import WorldDb
 
 MARGIN = 0.35
+TRAIL_CARD_S = 900
 SCENE_LIMIT = 600
 SCENE_NODES = 240
 TURN_MAX_PX = 4096
@@ -251,16 +252,18 @@ class App:
         self.known_cache[core] = rows
         return rows
 
-    def bot_card(self, core, guid):
+    def bot_card(self, core, guid, seconds=None):
         ctx = self.cores[core]
-        card = ctx.live.bot(guid)
+        seconds = seconds or TRAIL_CARD_S
+        card = ctx.live.bot(guid, seconds)
         if not card:
             return None
         names = ctx.basemaps.map_names()
         card["map_name"] = names.get(card["map"], f"map {card['map']}")
         card["zone_name"] = ctx.basemaps.area_name(card["zone"])
         card["area_name"] = ctx.basemaps.area_name(card["area"])
-        card["events"] = recent_events(ctx.core.logs, ctx.live.newest_ts, None, 3600, name=card["name"], limit=40)
+        card["seconds"] = seconds
+        card["events"] = recent_events(ctx.core.logs, ctx.live.newest_ts, None, seconds, name=card["name"], limit=400)
         card["runs"] = self.catalog.runs_by_host(core, card["name"])
         return card
 
